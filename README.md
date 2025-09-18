@@ -24,6 +24,7 @@ From inside this folder:
 Build venv (installs packages): `uv sync`
 
 Run main.py: `uv run streamlit run src/greenboard/main.py`
+
 Or: `./dev.sh` (may have to do `chmod +x dev.sh` first)
 
 To add a package, use `uv add <package-name>`. DO NOT pip install it!
