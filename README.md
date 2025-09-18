@@ -21,13 +21,22 @@ Install `uv`: https://docs.astral.sh/uv/getting-started/installation/
 
 From inside this folder:
 
-Build venv: `uv sync`
+Build venv (installs packages): `uv sync`
 
-Run main.py: `uv run python src/greenboard/main.py`
+Run main.py: `uv run streamlit run src/greenboard/main.py`
+Or: `./dev.sh` (may have to do `chmod +x dev.sh` first)
 
 To add a package, use `uv add <package-name>`. DO NOT pip install it!
 
 To activate the environment in VSCode, follow these instructions: [astral-sh/uv#9637](https://github.com/astral-sh/uv/issues/9637)
 
+### Running with Docker
 
+Easy: `./docker.sh` (may have to do `chmod +x docker.sh` first)
+
+Build: `docker compose build`
+
+Run: `docker compose up`
+
+Stop: `docker compose down`
 

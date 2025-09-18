@@ -4,4 +4,8 @@ version = "0.1.0"
 description = "Carbon Emissions Leaderboard for WPI"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.3.3",
+    "pandas>=2.3.2",
+    "streamlit>=1.49.1",
+]
