@@ -5,12 +5,14 @@ CREATE TABLE carriers (
     carrier_name VARCHAR(20) NOT NULL
 );
 
+INSERT INTO carriers (carrier_name) VALUES ('Other');
+
 CREATE TYPE transport_modes AS ENUM ('air', 'ground', 'sea');
 
 CREATE TABLE packages (
     package_id SERIAL PRIMARY KEY,
     tracking_number VARCHAR(255) NOT NULL,
-    package_carrier INT NOT NULL REFERENCES carriers(carrier_id),
+    package_carrier INT NOT NULL REFERENCES carriers(carrier_id) DEFAULT 1, -- Default to 'Other'
     service_type VARCHAR(50),
     date_shipped TIMESTAMP,
     transportation_method TRANSPORT_MODES,
