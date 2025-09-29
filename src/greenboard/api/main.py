@@ -1,20 +1,18 @@
-from fastapi import FastAPI, Depends
-from sqlalchemy.orm import Session
-from .database import get_db
-import sqlalchemy
+from fastapi import FastAPI
+from .routes import database
 
-app = FastAPI(title="WPI Greenboard API")
+app = FastAPI(
+    title="WPI Greenboard API",
+    description="Carbon Emissions Tracker for WPI Students",
+    version="0.1.0"
+)
 
-@app.get("/health")
-async def health_check(db: Session = Depends(get_db)):
-    result = db.execute(sqlalchemy.text("SELECT now()")).fetchone()
-    return {"status": "healthy", "database_time": result[0]}
+# Include all route modules
+app.include_router(database.router)
 
-@app.get("/tables")
-async def get_tables(db: Session = Depends(get_db)):
-    tables = db.execute(sqlalchemy.text("""
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-    """)).fetchall()
-    return {"tables": [table[0] for table in tables]}
+@app.get("/")
+async def root():
+    return {
+        "message": "Welcome to WPI Greenboard API",
+        "docs": "/docs"
+    }
