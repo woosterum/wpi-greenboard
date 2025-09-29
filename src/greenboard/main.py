@@ -1,24 +1,31 @@
 import streamlit as st
-import sqlalchemy
-
+import requests
 import os
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = sqlalchemy.create_engine(DATABASE_URL)
+# API configuration
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.title("WPI Greenboard")
 
-with engine.connect() as conn:
-    result = conn.execute(sqlalchemy.text("SELECT now()")).fetchone()
-    st.write("Database time:", result[0])
+# Health check
+try:
+    health_response = requests.get(f"{API_BASE_URL}/db/health")
+    if health_response.status_code == 200:
+        health_data = health_response.json()
+        st.success("✅ Connected to API")
+        st.write("Database time:", health_data["database_time"])
+    else:
+        st.error("❌ API connection failed")
+except requests.exceptions.RequestException:
+    st.error("❌ Cannot connect to API")
 
-    # Get all the tables in the database
-    tables = conn.execute(sqlalchemy.text("""
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-    """)).fetchall()
-
-    st.write("Tables in the database:")
-    for table in tables:
-        st.write("-", table[0])
+# Display tables
+try:
+    tables_response = requests.get(f"{API_BASE_URL}/db/tables")
+    if tables_response.status_code == 200:
+        tables_data = tables_response.json()
+        st.write("Tables in the database:")
+        for table in tables_data["tables"]:
+            st.write("-", table)
+except requests.exceptions.RequestException:
+    st.error("Failed to fetch tables")
