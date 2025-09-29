@@ -1,15 +1,27 @@
 services:
-  app:
+  api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     ports:
-      - "8501:8501"
+      - "8000:8000"
     restart: no
     depends_on:
       - db
     environment:
       DATABASE_URL: postgresql://myuser:mypassword@db:5432/mydb
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    ports:
+      - "8501:8501"
+    restart: no
+    depends_on:
+      - api
+    environment:
+      API_BASE_URL: http://api:8000
 
   db:
     image: postgres:15
@@ -19,7 +31,7 @@ services:
       POSTGRES_PASSWORD: mypassword
       POSTGRES_DB: mydb
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - ./db_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"

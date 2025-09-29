@@ -33,8 +33,9 @@ CREATE TABLE persons (
 
 -- Indicates department or major affiliation
 CREATE TABLE departments (
-    person_id CHAR(9) PRIMARY KEY REFERENCES persons(wpi_id),
-    department_name VARCHAR(100) PRIMARY KEY
+    person_id CHAR(9) REFERENCES persons(wpi_id),
+    department_name VARCHAR(100),
+    PRIMARY KEY (person_id, department_name)
 );
 
 CREATE TYPE transaction_types AS ENUM ('delivered', 'stored', 'routed');
