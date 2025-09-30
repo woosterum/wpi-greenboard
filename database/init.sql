@@ -16,6 +16,7 @@ CREATE TABLE emmissions (
 
 CREATE TABLE packages (
     package_id SERIAL PRIMARY KEY,
+    carrier_id INT REFERENCES carriers(carrier_id),
     tracking_number VARCHAR(255) NOT NULL,
     service_type VARCHAR(50) REFERENCES emmissions(service_type),
     date_shipped TIMESTAMP,
