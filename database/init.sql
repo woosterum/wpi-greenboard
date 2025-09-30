@@ -12,12 +12,15 @@ CREATE TYPE transport_modes AS ENUM ('air', 'ground', 'sea');
 CREATE TABLE packages (
     package_id SERIAL PRIMARY KEY,
     tracking_number VARCHAR(255) NOT NULL,
-    package_carrier INT NOT NULL REFERENCES carriers(carrier_id) DEFAULT 1, -- Default to 'Other'
-    service_type VARCHAR(50),
+    service_type VARCHAR(50) REFERENCES emmissions(service_type),
     date_shipped TIMESTAMP,
-    transportation_method TRANSPORT_MODES,
     total_emissions_kg FLOAT,
-    distance_traveled_mi FLOAT
+    distance_traveled FLOAT
+);
+
+CREATE TABLE emmissions (
+    service_type VARCHAR(50) PRIMARY KEY,
+    emission_factor FLOAT
 );
 
 CREATE TABLE persons (
