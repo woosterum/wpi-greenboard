@@ -9,6 +9,11 @@ INSERT INTO carriers (carrier_name) VALUES ('Other');
 
 CREATE TYPE transport_modes AS ENUM ('air', 'ground', 'sea');
 
+CREATE TABLE emmissions (
+    service_type VARCHAR(50) PRIMARY KEY,
+    emission_factor FLOAT
+);
+
 CREATE TABLE packages (
     package_id SERIAL PRIMARY KEY,
     tracking_number VARCHAR(255) NOT NULL,
@@ -18,10 +23,6 @@ CREATE TABLE packages (
     distance_traveled FLOAT
 );
 
-CREATE TABLE emmissions (
-    service_type VARCHAR(50) PRIMARY KEY,
-    emission_factor FLOAT
-);
 
 CREATE TABLE persons (
     wpi_id CHAR(9) PRIMARY KEY,
