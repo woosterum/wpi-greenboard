@@ -7,8 +7,6 @@ CREATE TABLE carriers (
 
 INSERT INTO carriers (carrier_name) VALUES ('Other');
 
-CREATE TYPE transport_modes AS ENUM ('air', 'ground', 'sea');
-
 CREATE TABLE emmissions (
     service_type VARCHAR(50) PRIMARY KEY,
     emission_factor FLOAT
