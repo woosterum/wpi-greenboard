@@ -26,7 +26,7 @@ def populate_db():
     # Clear existing data
     cur.execute("TRUNCATE TABLE transactions, packages, persons, departments RESTART IDENTITY CASCADE")
 
-    with open('report.csv', 'r') as f:
+    with open('reshaped_and_anonymized_report.csv', 'r') as f:
         reader = csv.DictReader(f)
 
         carriers = {}
@@ -50,7 +50,7 @@ def populate_db():
             person_hashes = {
                 'Delivered To': row.get('Delivered To'),
                 'Routed To': row.get('Routed To'),
-                'Stored To': osw.get('Stored To'),
+                'Stored To': row.get('Stored To'),
                 'Delivered By': row.get('Delivered By'),
                 'Routed By': row.get('Routed By'),
                 'Stored By': row.get('Stored By'),
@@ -74,11 +74,18 @@ def populate_db():
                         persons[person_hash] = cur.fetchone()[0]
 
             # Insert package
-            cur.execute(
-                "INSERT INTO packages (carrier_id, tracking_number) VALUES (%s, %s) RETURNING package_id",
-                (carriers[carrier_name], row['Tracking Number'])
-            )
-            package_id = cur.fetchone()[0]
+            recipient_hash = row.get('Delivered To') or row.get('Routed To') or row.get('Stored To')
+            if recipient_hash and recipient_hash in persons:
+                recipient_id = persons[recipient_hash]
+                cur.execute(
+                    "INSERT INTO packages (carrier_id, tracking_number, recipient_id) VALUES (%s, %s, %s) RETURNING package_id",
+                    (carriers[carrier_name], row['Tracking Number'], recipient_id)
+                )
+                package_id = cur.fetchone()[0]
+            else:
+                print(
+                    f"Skipping package with tracking number {row['Tracking Number']} due to missing recipient information.")
+                continue
 
             # Insert transactions
             if row.get('Date Stored'):
