@@ -2,7 +2,7 @@ CREATE DATABASE greenboard;
 
 CREATE TABLE carriers (
     carrier_id SERIAL PRIMARY KEY,
-    carrier_name VARCHAR(20) NOT NULL UNIQUE
+    carrier_name VARCHAR(20) UNIQUE NOT NULL
 );
 
 INSERT INTO carriers (carrier_name) VALUES ('Other');
