@@ -29,7 +29,7 @@ CREATE TABLE persons (
     last_name VARCHAR(50),
     is_student BOOLEAN,
     is_mailroom_worker BOOLEAN,
-    box_number VARCHAR(5),
+    box_number VARCHAR(255),
     class_year INT, -- If > 4 => Graduate Student
     supervisor_id CHAR(9) NULL REFERENCES persons(wpi_id)
 );

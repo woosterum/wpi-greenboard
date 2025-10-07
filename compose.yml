@@ -47,5 +47,19 @@ services:
     depends_on:
       - db
 
+  db-populator:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: no
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://myuser:mypassword@db:5432/mydb
+      POSTGRES_DB: mydb
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+    command: python scripts/populate_db.py
+
 volumes:
   db_data:
