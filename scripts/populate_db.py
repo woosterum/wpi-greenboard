@@ -26,7 +26,7 @@ def populate_db():
     # Clear existing data
     cur.execute("TRUNCATE TABLE transactions, packages, persons, departments RESTART IDENTITY CASCADE")
 
-    with open('reshaped_and_anonymized_report.csv', 'r') as f:
+    with open('report.csv', 'r') as f:
         reader = csv.DictReader(f)
 
         carriers = {}
