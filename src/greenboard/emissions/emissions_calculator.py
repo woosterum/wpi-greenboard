@@ -549,8 +549,7 @@ class FedExAdapter(CarrierAdapter):
     
     def __init__(self, production: bool = False):
         self.production = production
-        self.base_url = ("https://apis.fedex.com" if production 
-                        else "https://apis-sandbox.fedex.com")
+        self.base_url = "https://apis.fedex.com" 
     
     def authenticate(self, credentials: Dict[str, str]) -> Optional[str]:
         token_url = f"{self.base_url}/oauth/token"
@@ -596,6 +595,7 @@ class FedExAdapter(CarrierAdapter):
             response = requests.post(track_url, json=payload, headers=headers)
             response.raise_for_status()
             print(f"✅ FedEx: Retrieved tracking data for {tracking_number}")
+            # print(response.json())
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"❌ FedEx tracking error: {e}")
@@ -616,8 +616,7 @@ class FedExAdapter(CarrierAdapter):
             weight_kg = 2.27  # Default
             if 'packageDetails' in track_results:
                 package_details = track_results['packageDetails']
-                if 'packageWeight' in package_details:
-                    weight_info = package_details['packageWeight'][0]
+                for weight_info in package_details['weightAndDimensions']['weight']:
                     weight_value = float(weight_info.get('value', 5.0))
                     unit = weight_info.get('unit', 'LB')
                     
@@ -686,7 +685,7 @@ class FedExAdapter(CarrierAdapter):
 # ============================================================================
 
 class DHLAdapter(CarrierAdapter):
-    """DHL-specific implementation"""
+    """DHL eCommerce Americas-specific implementation"""
     
     SERVICE_TO_MODE = {
         'EXPRESS_WORLDWIDE': 'air_longhaul',
@@ -700,18 +699,22 @@ class DHLAdapter(CarrierAdapter):
     
     def __init__(self, production: bool = False):
         self.production = production
-        self.base_url = "https://api.dhl.com" 
+        if production:
+            self.base_url = "https://api.dhl.com"
+        else:
+            self.base_url = "https://api-sandbox.dhlecs.com"
     
     def authenticate(self, credentials: Dict[str, str]) -> Optional[str]:
-        token_url = f"{self.base_url}/auth/v4/accesstoken"
+        """Authenticate with DHL eCommerce Americas API"""
+        token_url = f"{self.base_url}/auth/v1/token"
         
-        # Create base64 encoded auth string
+        # Basic Auth with base64
         auth_string = f"{credentials['client_id']}:{credentials['client_secret']}"
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         
         headers = {
             "Authorization": f"Basic {auth_b64}",
-            "Content-Type": "application/json"
+            "Accept": "application/json"
         }
         
         params = {
@@ -727,10 +730,12 @@ class DHLAdapter(CarrierAdapter):
         except requests.exceptions.RequestException as e:
             print(f"❌ DHL authentication error: {e}")
             if hasattr(e, 'response') and e.response:
+                print(f"   Status: {e.response.status_code}")
                 print(f"   Response: {e.response.text}")
             return None
     
     def get_tracking_data(self, token: str, tracking_number: str) -> Optional[Dict]:
+        """Fetch DHL tracking data"""
         track_url = f"{self.base_url}/track/shipments"
         
         headers = {
@@ -752,6 +757,7 @@ class DHLAdapter(CarrierAdapter):
             return None
     
     def parse_tracking_data(self, tracking_data: Dict) -> Optional[PackageInfo]:
+        """Parse DHL tracking data"""
         try:
             if 'shipments' not in tracking_data:
                 print("❌ No shipments in DHL response")
@@ -822,6 +828,7 @@ class DHLAdapter(CarrierAdapter):
             return None
     
     def get_transport_mode(self, service_code: str) -> str:
+        """Map DHL service code to transport mode"""
         return self.SERVICE_TO_MODE.get(service_code.upper(), self.SERVICE_TO_MODE['default'])
 
 
@@ -1161,12 +1168,13 @@ if __name__ == "__main__":
     print("\n\nExample 2: FedEx Ground")
     print("-" * 70)
     
+    # skapoor account number: 209908712
     fedex_result = calculate_package_emissions(
         carrier='fedex',
         tracking_number='484078159554', # SK sample tracking number
         credentials={
-            'client_id': 'YOUR_FEDEX_CLIENT_ID',
-            'client_secret': 'YOUR_FEDEX_CLIENT_SECRET'
+            'client_id': 'l74673b0ec87d749268da2b0e59460429c',
+            'client_secret': '4e8527a4c6614ef386672eebeb086223'
         },
         production=False
     )
@@ -1196,12 +1204,12 @@ if __name__ == "__main__":
     
     dhl_result = calculate_package_emissions(
         carrier='dhl',
-        tracking_number='1234567890',
+        tracking_number='2662115901',
         credentials={
-            'client_id': 'YOUR_DHL_CONSUMER_KEY',
-            'client_secret': 'YOUR_DHL_SECRET_KEY'
+            'client_id': 'JLOAsRhxyRDiU4hyT1w4ueexJlqSMVqg',
+            'client_secret': 'cMI8ojXzljz32GhE'
         },
-        production=False
+        production=True
     )
     print(dhl_result)
     # 
