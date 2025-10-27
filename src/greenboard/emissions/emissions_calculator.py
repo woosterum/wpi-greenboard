@@ -444,11 +444,11 @@ class USPSAdapter(CarrierAdapter):
         track_url = f"{self.base_url}/tracking/v3/tracking/{tracking_number}"
         
         headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {token}"
+            # "Content-Type": "application/json"
         }
         
-        params = {"expand": "detail"}
+        params = {"expand": "summary"}
         
         try:
             response = requests.get(track_url, headers=headers, params=params)
@@ -831,6 +831,247 @@ class DHLAdapter(CarrierAdapter):
         """Map DHL service code to transport mode"""
         return self.SERVICE_TO_MODE.get(service_code.upper(), self.SERVICE_TO_MODE['default'])
 
+# ============================================================================
+# AMAZON ADAPTER WITH REALISTIC VARIATION
+# ============================================================================
+
+import random
+import hashlib
+
+class AmazonAdapter(CarrierAdapter):
+    """Amazon-specific implementation using realistic estimation with variation"""
+    
+    # Amazon warehouse locations near Worcester, MA
+    WAREHOUSES = {
+        'BOS5': {'city': 'Bellingham', 'state': 'MA', 'lat': 42.0868, 'lon': -71.4745, 'distance_km': 32},  # ~20 miles
+        'BOS7': {'city': 'Fall River', 'state': 'MA', 'lat': 41.7015, 'lon': -71.1550, 'distance_km': 80},  # ~50 miles
+        'BDL1': {'city': 'Windsor', 'state': 'CT', 'lat': 41.8268, 'lon': -72.6434, 'distance_km': 96},  # ~60 miles
+        'BOS1': {'city': 'North Andover', 'state': 'MA', 'lat': 42.6987, 'lon': -71.1350, 'distance_km': 72},  # ~45 miles
+        'PHL7': {'city': 'Avenel', 'state': 'NJ', 'lat': 40.5821, 'lon': -74.2793, 'distance_km': 290},  # ~180 miles - larger items
+    }
+    
+    # Weight distribution based on common Amazon item categories
+    WEIGHT_PROFILES = {
+        'small_light': {'mean': 0.45, 'std': 0.15, 'min': 0.1, 'max': 0.9},      # Books, small electronics (~1 lb)
+        'small_medium': {'mean': 1.36, 'std': 0.45, 'min': 0.5, 'max': 2.7},     # Clothing, medium items (~3 lbs)
+        'medium': {'mean': 2.72, 'std': 0.9, 'min': 1.4, 'max': 5.4},           # Shoes, kitchen items (~6 lbs)
+        'medium_heavy': {'mean': 5.44, 'std': 1.8, 'min': 2.7, 'max': 9.1},     # Small appliances (~12 lbs)
+        'heavy': {'mean': 11.34, 'std': 4.5, 'min': 6.8, 'max': 22.7},          # Large items (~25 lbs)
+        'extra_heavy': {'mean': 22.68, 'std': 9.1, 'min': 13.6, 'max': 45.4},   # Furniture, bulk (~50 lbs)
+    }
+    
+    # Service type probability distribution
+    SERVICE_TYPES = {
+        'AMAZON_PRIME': 0.60,        # 60% Prime 2-day
+        'AMAZON_SAME_DAY': 0.10,     # 10% Same-day
+        'AMAZON_STANDARD': 0.25,     # 25% Standard 5-7 day
+        'AMAZON_FRESH': 0.05,        # 5% Fresh/Grocery
+    }
+    
+    SERVICE_TO_MODE = {
+        'AMAZON_STANDARD': 'truck_average',
+        'AMAZON_PRIME': 'truck_average',
+        'AMAZON_SAME_DAY': 'last_mile',
+        'AMAZON_FRESH': 'last_mile',
+        'default': 'truck_average'
+    }
+    
+    def __init__(self, production: bool = False):
+        self.production = production
+        random.seed()  # Initialize random for real randomness
+    
+    def authenticate(self, credentials: Dict[str, str]) -> Optional[str]:
+        """Amazon doesn't require authentication for our estimation approach"""
+        print("✅ Amazon: Using intelligent estimation mode")
+        return "ESTIMATION_MODE"
+    
+    def _get_deterministic_random(self, tracking_number: str, seed_suffix: str = "") -> float:
+        """Generate deterministic 'random' value from tracking number (0.0 to 1.0)"""
+        # Use hash of tracking number for consistent results per package
+        hash_input = f"{tracking_number}{seed_suffix}".encode()
+        hash_val = int(hashlib.sha256(hash_input).hexdigest(), 16)
+        return (hash_val % 10000) / 10000.0
+    
+    def _select_weight_profile(self, tracking_number: str) -> str:
+        """Select weight profile based on tracking number"""
+        rand_val = self._get_deterministic_random(tracking_number, "weight")
+        
+        # Distribution: 35% small, 30% medium, 20% medium-heavy, 10% heavy, 5% extra heavy
+        if rand_val < 0.20:
+            return 'small_light'
+        elif rand_val < 0.50:
+            return 'small_medium'
+        elif rand_val < 0.75:
+            return 'medium'
+        elif rand_val < 0.90:
+            return 'medium_heavy'
+        elif rand_val < 0.97:
+            return 'heavy'
+        else:
+            return 'extra_heavy'
+    
+    def _generate_weight(self, tracking_number: str) -> float:
+        """Generate realistic weight based on tracking number"""
+        profile_name = self._select_weight_profile(tracking_number)
+        profile = self.WEIGHT_PROFILES[profile_name]
+        
+        # Use tracking number to seed a deterministic weight within profile
+        rand_val = self._get_deterministic_random(tracking_number, "weight_val")
+        
+        # Convert uniform random to normal distribution (Box-Muller approximation)
+        rand_val2 = self._get_deterministic_random(tracking_number, "weight_val2")
+        z_score = ((rand_val + rand_val2) - 1.0) * 2.5  # Approximate normal
+        
+        weight = profile['mean'] + z_score * profile['std']
+        weight = max(profile['min'], min(profile['max'], weight))  # Clamp to range
+        
+        return round(weight, 2)
+    
+    def _select_warehouse(self, tracking_number: str, weight_kg: float) -> str:
+        """Select warehouse based on package characteristics"""
+        rand_val = self._get_deterministic_random(tracking_number, "warehouse")
+        
+        # Heavier items more likely from farther warehouses
+        if weight_kg > 15:  # Very heavy items
+            if rand_val < 0.40:
+                return 'PHL7'  # New Jersey - handles large items
+            elif rand_val < 0.70:
+                return 'BDL1'  # Connecticut
+            else:
+                return 'BOS7'  # Fall River
+        elif weight_kg > 8:  # Heavy items
+            if rand_val < 0.30:
+                return 'BDL1'
+            elif rand_val < 0.60:
+                return 'BOS7'
+            else:
+                return 'BOS5'
+        else:  # Normal items - mostly local
+            if rand_val < 0.60:
+                return 'BOS5'  # Closest - Bellingham
+            elif rand_val < 0.85:
+                return 'BOS1'  # North Andover
+            else:
+                return 'BOS7'  # Fall River
+    
+    def _select_service_type(self, tracking_number: str) -> Tuple[str, str]:
+        """Select service type based on tracking number"""
+        rand_val = self._get_deterministic_random(tracking_number, "service")
+        
+        cumulative = 0.0
+        for service, probability in self.SERVICE_TYPES.items():
+            cumulative += probability
+            if rand_val < cumulative:
+                descriptions = {
+                    'AMAZON_PRIME': 'Amazon Prime 2-Day Delivery',
+                    'AMAZON_SAME_DAY': 'Amazon Same-Day Delivery',
+                    'AMAZON_STANDARD': 'Amazon Standard Shipping',
+                    'AMAZON_FRESH': 'Amazon Fresh Delivery'
+                }
+                return service, descriptions[service]
+        
+        return 'AMAZON_PRIME', 'Amazon Prime 2-Day Delivery'
+    
+    def _generate_dimensions(self, tracking_number: str, weight_kg: float) -> Optional[Tuple[float, float, float]]:
+        """Generate realistic dimensions based on weight"""
+        rand_val = self._get_deterministic_random(tracking_number, "dims")
+        
+        # 40% of packages have dimensional weight considerations
+        if rand_val > 0.40:
+            return None
+        
+        # Estimate volume from weight (assuming various densities)
+        # Light items: more voluminous (pillows, paper products)
+        # Heavy items: more dense (electronics, tools)
+        
+        if weight_kg < 2:
+            # Small packages: 20-40cm per side
+            size_factor = 25 + rand_val * 15
+        elif weight_kg < 5:
+            # Medium packages: 30-50cm per side
+            size_factor = 35 + rand_val * 15
+        elif weight_kg < 10:
+            # Large packages: 40-70cm per side
+            size_factor = 50 + rand_val * 20
+        else:
+            # Extra large: 60-100cm per side
+            size_factor = 70 + rand_val * 30
+        
+        # Generate box dimensions with some variation
+        length = size_factor
+        width = size_factor * (0.7 + rand_val * 0.3)
+        height = size_factor * (0.4 + rand_val * 0.4)
+        
+        return (round(length, 1), round(width, 1), round(height, 1))
+    
+    def get_tracking_data(self, token: str, tracking_number: str) -> Optional[Dict]:
+        """Return estimated data based on tracking number"""
+        return {
+            'tracking_number': tracking_number,
+            'carrier': 'Amazon',
+            'estimation_mode': True
+        }
+    
+    def parse_tracking_data(self, tracking_data: Dict) -> Optional[PackageInfo]:
+        """
+        Create realistic PackageInfo with variation based on tracking number.
+        Same tracking number always produces same results.
+        """
+        tracking_number = tracking_data['tracking_number']
+        
+        print("\n📦 Amazon Package Estimation (Intelligent Mode)")
+        print("   Using deterministic variation based on tracking number")
+        
+        # Generate characteristics
+        weight_kg = self._generate_weight(tracking_number)
+        warehouse_code = self._select_warehouse(tracking_number, weight_kg)
+        service_code, service_desc = self._select_service_type(tracking_number)
+        dimensions = self._generate_dimensions(tracking_number, weight_kg)
+        
+        # Get warehouse info
+        warehouse = self.WAREHOUSES[warehouse_code]
+        
+        # Origin: Selected Amazon warehouse
+        origin = Address(
+            city=warehouse['city'],
+            state=warehouse['state'],
+            postal_code=None,
+            country='US',
+            latitude=warehouse['lat'],
+            longitude=warehouse['lon']
+        )
+        
+        # Destination: Worcester, MA
+        destination = Address(
+            city='Worcester',
+            state='MA',
+            postal_code='01609',
+            country='US',
+            latitude=42.2626,
+            longitude=-71.8023
+        )
+        
+        print(f"  ✓ Weight: {weight_kg:.2f} kg ({weight_kg * 2.20462:.2f} lbs)")
+        print(f"  ✓ Origin: {origin.city}, {origin.state} (Amazon {warehouse_code})")
+        print(f"  ✓ Destination: {destination.city}, {destination.state}")
+        print(f"  ✓ Service: {service_desc}")
+        if dimensions:
+            print(f"  📏 Dimensions: {dimensions[0]}×{dimensions[1]}×{dimensions[2]} cm")
+        
+        return PackageInfo(
+            tracking_number=tracking_number,
+            weight_kg=weight_kg,
+            dimensions=dimensions,
+            origin=origin,
+            destination=destination,
+            service_code=service_code,
+            service_description=service_desc,
+            carrier='Amazon'
+        )
+    
+    def get_transport_mode(self, service_code: str) -> str:
+        return self.SERVICE_TO_MODE.get(service_code, self.SERVICE_TO_MODE['default'])
+
 
 # ============================================================================
 # CARRIER FACTORY
@@ -844,6 +1085,7 @@ class CarrierFactory:
         'usps': USPSAdapter,
         'fedex': FedExAdapter,
         'dhl': DHLAdapter,
+        'amazon': AmazonAdapter,
     }
     
     @classmethod
