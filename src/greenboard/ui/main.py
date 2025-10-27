@@ -5,6 +5,11 @@ import os
 # API configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
+st.set_page_config(
+    page_title="WPI Greenboard",
+    page_icon="🏆",
+)
+
 st.title("WPI Greenboard")
 
 # Health check
