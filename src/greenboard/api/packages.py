@@ -8,10 +8,10 @@ from ..models import Package, Carrier, Emission, PackageRead
 router = APIRouter(prefix="/packages", tags=["packages"])
 
 
-@router.get("/", response_model=List[PackageRead])
+@router.get("/", response_model=List[Package])
 async def get_packages(
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, le=1000),
+    entries_per_page: int = Query(100, le=1000),
     session: Session = Depends(get_session)
 ):
     """Get all packages with carrier info."""
@@ -27,7 +27,7 @@ async def get_packages(
         )
         .join(Carrier, Package.carrier_id == Carrier.carrier_id, isouter=True)
         .offset(skip)
-        .limit(limit)
+        .limit(entries_per_page)
     )
     
     results = session.exec(statement).all()
