@@ -9,6 +9,7 @@ app = FastAPI(
 
 # Include all route modules
 app.include_router(database.router)
+app.include_router(packages.router)
 
 @app.get("/")
 async def root():
