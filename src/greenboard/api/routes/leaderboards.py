@@ -1,0 +1,42 @@
+from fastapi import APIRouter, Depends, Query
+from sqlmodel import Session, select, text
+from typing import List
+
+from ..database import get_session
+from ..models import Package, Carrier, Emission, PackageRead
+
+router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
+
+
+@router.get("/students")
+async def get_leaderboard(db: Session = Depends(get_session)):
+    """
+    Leaderboard of students ranked by total carbon emissions (kg CO2).
+    Includes student name, total emissions, and their major/department.
+    """
+    query = text("""
+        SELECT 
+            p.first_name,
+            p.last_name,
+            COALESCE(SUM(pk.total_emissions_kg), 0) AS total_emissions,
+            d.department_name AS major
+        FROM persons p
+        LEFT JOIN packages pk ON p.wpi_id = pk.recipient_id
+        LEFT JOIN departments d ON p.wpi_id = d.person_id
+        WHERE p.is_student = TRUE
+        GROUP BY p.wpi_id, d.department_name
+        ORDER BY total_emissions DESC
+    """)
+
+    results = db.exec(query).all()
+
+    leaderboard = []
+    for rank, (first_name, last_name, emissions, major) in enumerate(results, start=1):
+        leaderboard.append({
+            "rank": rank,
+            "name": f"Anonymous {last_name}",  # anonymized display
+            "carbon_emissions_kg": round(emissions or 0, 2),
+            "major": major
+        })
+
+    return leaderboard

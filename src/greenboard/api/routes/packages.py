@@ -10,26 +10,29 @@ router = APIRouter(prefix="/packages", tags=["packages"])
 
 @router.get("/", response_model=List[Package])
 async def get_packages(
-    entries_per_page: int = Query(100, le=1000),
-    session: Session = Depends(get_session)
+    page: int = Query(1, ge=1, description="Page number, starting from 1"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    db: Session = Depends(get_session)
 ):
-    """Get all packages with carrier info."""
-    with next(get_session()) as session:
-        statement = (
-            select(
-                Package.package_id,
-                Package.tracking_number,
-                Carrier.carrier_name,
-                Package.service_type,
-                Package.date_shipped,
-                Package.total_emissions_kg,
-                Package.distance_traveled
-            )
-            .join(Carrier, Package.carrier_id == Carrier.carrier_id, isouter=True)
-            .limit(entries_per_page)
+    offset = (page - 1) * limit
+
+    # total = db.exec(select(Package)).count()  # optional: for total count
+    statement = (
+        select(
+            Package.package_id,
+            Package.tracking_number,
+            Carrier.carrier_name,
+            Package.service_type,
+            Package.date_shipped,
+            Package.total_emissions_kg,
+            Package.distance_traveled
         )
-        
-        results = session.exec(statement).all()
+        .join(Carrier, Package.carrier_id == Carrier.carrier_id, isouter=True)
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    results = db.exec(statement).all()
     
     return [
         PackageRead(
