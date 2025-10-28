@@ -1,6 +1,4 @@
 from sqlmodel import Session, create_engine
-
-
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
