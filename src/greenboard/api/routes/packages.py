@@ -2,35 +2,34 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from typing import List
 
-from .database import get_session
-from .models import Package, Carrier, Emission, PackageRead
+from ..database import get_session
+from ..models import Package, Carrier, Emission, PackageRead
 
 router = APIRouter(prefix="/packages", tags=["packages"])
 
 
 @router.get("/", response_model=List[Package])
 async def get_packages(
-    skip: int = Query(0, ge=0),
     entries_per_page: int = Query(100, le=1000),
     session: Session = Depends(get_session)
 ):
     """Get all packages with carrier info."""
-    statement = (
-        select(
-            Package.package_id,
-            Package.tracking_number,
-            Carrier.carrier_name,
-            Package.service_type,
-            Package.date_shipped,
-            Package.total_emissions_kg,
-            Package.distance_traveled
+    with next(get_session()) as session:
+        statement = (
+            select(
+                Package.package_id,
+                Package.tracking_number,
+                Carrier.carrier_name,
+                Package.service_type,
+                Package.date_shipped,
+                Package.total_emissions_kg,
+                Package.distance_traveled
+            )
+            .join(Carrier, Package.carrier_id == Carrier.carrier_id, isouter=True)
+            .limit(entries_per_page)
         )
-        .join(Carrier, Package.carrier_id == Carrier.carrier_id, isouter=True)
-        .offset(skip)
-        .limit(entries_per_page)
-    )
-    
-    results = session.exec(statement).all()
+        
+        results = session.exec(statement).all()
     
     return [
         PackageRead(

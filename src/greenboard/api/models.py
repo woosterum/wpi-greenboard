@@ -93,3 +93,32 @@ class Transaction(SQLModel, table=True):
     # Relationships
     package: Optional[Package] = Relationship(back_populates="transactions")
     worker: Optional[Person] = Relationship(back_populates="transactions")
+
+### Output Data Models 
+class PackageRead(SQLModel):
+    """Response model for package with carrier info"""
+    package_id: int
+    tracking_number: str
+    carrier_name: Optional[str] = None
+    service_type: Optional[str] = None
+    date_shipped: Optional[datetime] = None
+    total_emissions_kg: Optional[float] = None
+    distance_traveled: Optional[float] = None
+
+
+class PersonRead(SQLModel):
+    """Response model for person"""
+    wpi_id: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    is_student: Optional[bool] = None
+    box_number: Optional[str] = None
+    class_year: Optional[int] = None
+    
+
+class EmissionsStats(SQLModel):
+    """Statistics model"""
+    carrier_name: str
+    package_count: int
+    total_emissions_kg: float
+    avg_emissions_kg: float
