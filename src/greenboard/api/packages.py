@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from typing import List
 
-from ..database import get_session
-from ..models import Package, Carrier, Emission, PackageRead
+from .database import get_session
+from .models import Package, Carrier, Emission, PackageRead
 
 router = APIRouter(prefix="/packages", tags=["packages"])
 

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from .routes import database
+from .routes import packages
 
 app = FastAPI(
     title="WPI Greenboard API",
