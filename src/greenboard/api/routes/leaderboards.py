@@ -9,7 +9,7 @@ router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 
 
 @router.get("/students")
-async def get_leaderboard(db: Session = Depends(get_session)):
+async def get_student_leaderboard(db: Session = Depends(get_session)):
     """
     Leaderboard of students ranked by total carbon emissions (kg CO2).
     Includes student name, total emissions, and their major/department.
@@ -42,10 +42,10 @@ async def get_leaderboard(db: Session = Depends(get_session)):
     return leaderboard
 
 @router.get("/majors")
-async def get_leaderboard(db: Session = Depends(get_session)):
+async def get_majors_leaderboard(db: Session = Depends(get_session)):
     """
-    Leaderboard of students ranked by total carbon emissions (kg CO2).
-    Includes student name, total emissions, and their major/department.
+    Leaderboard of majors ranked by total carbon emissions (kg CO2).
+    Includes total emissions, and their related major/department.
     """
     query = text("""
         SELECT 
