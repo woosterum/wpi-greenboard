@@ -59,6 +59,10 @@ services:
       POSTGRES_DB: mydb
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
+    volumes:
+      - ./transaction_data.csv:/app/transaction_data.csv
+      - ./emissions_data.csv:/app/emissions_data.csv
+      - ./package_data.csv:/app/package_data.csv
     command: python scripts/populate_db.py
 
 volumes:

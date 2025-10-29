@@ -2,7 +2,7 @@ CREATE DATABASE greenboard;
 
 CREATE TABLE carriers (
     carrier_id SERIAL PRIMARY KEY,
-    carrier_name VARCHAR(20) NOT NULL
+    carrier_name VARCHAR(20) NOT NULL UNIQUE
 );
 
 INSERT INTO carriers (carrier_name) VALUES ('Other');
@@ -44,7 +44,7 @@ CREATE TABLE packages (
     package_id SERIAL PRIMARY KEY,
     carrier_id INT NULL,
     recipient_id CHAR(9) NULL,
-    tracking_number VARCHAR(255) NOT NULL,
+    tracking_number VARCHAR(255) NOT NULL UNIQUE,
     service_type VARCHAR(50) NULL,
     date_shipped TIMESTAMP,
     total_emissions_kg FLOAT,

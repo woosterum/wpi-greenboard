@@ -2,9 +2,36 @@ import os
 import csv
 import psycopg2
 import time
+import random
+import re
+import sys
+
+# List of colors for random first names, as one was not provided
+COLORS = [
+    "Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Black", "White",
+    "Pink", "Brown", "Gray", "Cyan", "Magenta", "Teal", "Navy", "Olive",
+    "Maroon", "Lime", "Aqua", "Silver"
+]
+
+# List of animals for random last names, as provided
+ANIMALS = [
+    "alligator", "anteater", "armadillo", "auroch", "axolotl", "badger", "bat",
+    "bear", "beaver", "blobfish", "buffalo", "camel", "chameleon", "cheetah",
+    "chipmunk", "chinchilla", "chupacabra", "cormorant", "coyote", "crow",
+    "dingo", "dinosaur", "dog", "dolphin", "dragon", "duck", "dumbo octopus",
+    "elephant", "ferret", "fox", "frog", "giraffe", "goose", "gopher",
+    "grizzly", "hamster", "hedgehog", "hippo", "hyena", "jackal", "jackalope",
+    "ibex", "ifrit", "iguana", "kangaroo", "kiwi", "koala", "kraken", "lemur",
+    "leopard", "liger", "lion", "llama", "manatee", "mink", "monkey", "moose",
+    "narwhal", "nyan cat", "orangutan", "otter", "panda", "penguin",
+    "platypus", "python", "pumpkin", "quagga", "quokka", "rabbit", "raccoon",
+    "rhino", "sheep", "shrew", "skunk", "slow loris", "squirrel", "tiger",
+    "turtle", "unicorn", "walrus", "wolf", "wolverine", "wombat",
+]
 
 
-def populate_db():
+def get_db_connection():
+    """Establishes a connection to the database with retries."""
     retries = 5
     while retries > 0:
         try:
@@ -14,101 +41,291 @@ def populate_db():
                 password=os.getenv("POSTGRES_PASSWORD"),
                 host="db"
             )
-            break
-        except psycopg2.OperationalError:
+            print("Successfully connected to the database.")
+            return conn
+        except psycopg2.OperationalError as e:
+            print(f"Connection failed: {e}. Retrying in 5 seconds...")
             retries -= 1
             time.sleep(5)
-    else:
-        raise Exception("Could not connect to the database")
 
-    cur = conn.cursor()
+    print("Could not connect to the database after 5 attempts.", file=sys.stderr)
+    raise Exception("Database connection failed")
 
-    # Clear existing data
-    cur.execute("TRUNCATE TABLE transactions, packages, persons, departments RESTART IDENTITY CASCADE")
 
-    with open('report.csv', 'r') as f:
-        reader = csv.DictReader(f)
+def populate_carriers(cur):
+    """Populates the carriers table from package_data.csv."""
+    print("Populating carriers table...")
+    carriers = set()
+    try:
+        with open('package_data.csv', mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                carrier_name = row.get('Carrier')
+                if carrier_name:
+                    carriers.add(carrier_name)
 
-        carriers = {}
-        persons = {}
+        insert_sql = """
+        INSERT INTO carriers (carrier_name) VALUES (%s)
+        ON CONFLICT (carrier_name) DO NOTHING;
+        """
 
-        for row in reader:
-            # Insert carrier if it doesn't exist
-            carrier_name = row['Item']
-            if carrier_name not in carriers:
-                cur.execute(
-                    "INSERT INTO carriers (carrier_name) VALUES (%s) ON CONFLICT (carrier_name) DO NOTHING RETURNING carrier_id",
-                    (carrier_name,))
-                result = cur.fetchone()
-                if result:
-                    carriers[carrier_name] = result[0]
+        for carrier_name in carriers:
+            cur.execute(insert_sql, (carrier_name,))
+
+        print(f"Populated/updated {len(carriers)} carriers.")
+
+    except Exception as e:
+        print(f"Error populating carriers: {e}", file=sys.stderr)
+        raise
+
+
+def populate_emissions(cur):
+    """Populates the emissions table from emissions_data.csv."""
+    print("Populating emissions table...")
+    services = {}
+    try:
+        with open('emissions_data.csv', mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Only add if service AND factor are valid
+                service = row.get('service')
+                factor = row.get('emission_factor')
+                if service and factor:  # This skips None, '', etc.
+                    try:
+                        # Keep the first factor found for a given service
+                        if service not in services:
+                            services[service] = float(factor)
+                    except ValueError:
+                        pass  # Ignore rows with invalid emission_factor
+
+        insert_sql = """
+        INSERT INTO emissions (service_type, emission_factor) VALUES (%s, %s)
+        ON CONFLICT (service_type) DO NOTHING;
+        """
+
+        for service, factor in services.items():
+            cur.execute(insert_sql, (service, factor))
+
+        print(f"Populated {len(services)} emission service types.")
+
+    except Exception as e:
+        print(f"Error populating emissions: {e}", file=sys.stderr)
+        raise
+
+
+def populate_persons(cur):
+    """Populates the persons table from package_data.csv."""
+    print("Populating persons table...")
+    persons = {}
+    try:
+        with open('package_data.csv', mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                location_1 = row.get('Location 1')
+                # Check if Location 1 is a 4-digit number
+                if location_1 and re.match(r'^\d{4}$', location_1):
+                    # Pad to 9 chars for wpi_id
+                    wpi_id = location_1.zfill(9)
+                    if wpi_id not in persons:
+                        persons[wpi_id] = {
+                            "box_number": location_1,
+                            "first_name": random.choice(COLORS),
+                            "last_name": random.choice(ANIMALS).capitalize()
+                        }
+
+        insert_sql = """
+        INSERT INTO persons (wpi_id, first_name, last_name, is_student, is_mailroom_worker, box_number, class_year, supervisor_id)
+        VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL)
+        ON CONFLICT (wpi_id) DO NOTHING;
+        """
+
+        for wpi_id, data in persons.items():
+            cur.execute(insert_sql, (
+                wpi_id,
+                data['first_name'],
+                data['last_name'],
+                True,  # is_student
+                False,  # is_mailroom_worker
+                data['box_number']
+            ))
+
+        print(f"Populated {len(persons)} persons.")
+
+    except Exception as e:
+        print(f"Error populating persons: {e}", file=sys.stderr)
+        raise
+
+
+def populate_packages(cur):
+    """Populates the packages table using data from both CSV files."""
+    print("Populating packages table...")
+
+    # 1. Get carrier IDs from DB
+    cur.execute("SELECT carrier_id, carrier_name FROM carriers;")
+    carrier_map = {name: id for id, name in cur.fetchall()}
+
+    # 2. Load emissions data into a dictionary for quick lookup
+    emissions_data = {}
+    try:
+        with open('emissions_data.csv', mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                tracking_num = row.get('tracking_number')
+                if tracking_num:
+                    emissions_data[tracking_num] = {
+                        "service": row.get('service'),
+                        "emissions_kg": row.get('total_emissions_kg_co2e'),
+                        # --- THIS IS THE FIX ---
+                        "distance_km": row.get('distance_km')
+                        # --- END OF FIX ---
+                    }
+    except Exception as e:
+        print(f"Error reading emissions_data.csv: {e}", file=sys.stderr)
+        raise
+
+    print(f"Loaded {len(emissions_data)} emissions records into memory.")
+
+    # 3. Read package_data.csv and insert into packages table
+    packages_to_insert = []
+    try:
+        with open('package_data.csv', mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                location_1 = row.get('Location 1')
+                # Only process packages with a valid recipient (4-digit box number)
+                if not (location_1 and re.match(r'^\d{4}$', location_1)):
+                    continue
+
+                recipient_id = location_1.zfill(9)  # Pad to 9 chars
+                tracking_num_raw = row.get('Tracking #')
+
+                # Remove trailing underscore
+                tracking_num = tracking_num_raw.rstrip('_') if tracking_num_raw else None
+
+                if not tracking_num:
+                    continue
+
+                carrier_name = row.get('Carrier')
+                carrier_id = carrier_map.get(carrier_name)  # Get FK
+
+                # Get data from emissions dict
+                em_data = emissions_data.get(tracking_num)
+
+                if em_data:
+                    # If service is '' or None, set to NULL (None)
+                    service_type = em_data['service']
+                    if not service_type:
+                        service_type = None
+
+                    try:
+                        total_emissions = float(em_data['emissions_kg'])
+                    except (ValueError, TypeError):
+                        total_emissions = None
+                    try:
+                        distance = float(em_data['distance_km'])
+                    except (ValueError, TypeError):
+                        distance = None
                 else:
-                    cur.execute("SELECT carrier_id FROM carriers WHERE carrier_name = %s", (carrier_name,))
-                    carriers[carrier_name] = cur.fetchone()[0]
+                    # No emissions data found for this tracking number
+                    service_type = None
+                    total_emissions = None
+                    distance = None
 
-            # Create placeholder persons
-            person_hashes = {
-                'Delivered To': row.get('Delivered To'),
-                'Routed To': row.get('Routed To'),
-                'Stored To': row.get('Stored To'),
-                'Delivered By': row.get('Delivered By'),
-                'Routed By': row.get('Routed By'),
-                'Stored By': row.get('Stored By'),
-            }
+                # As discovered, date_shipped is not available. Set to NULL.
+                date_shipped = None
 
-            for key, person_hash in person_hashes.items():
-                if person_hash and person_hash not in persons:
-                    # Generate a unique wpi_id. Using the hash should be fine for now.
-                    # Making sure it is 9 chars long
-                    wpi_id = person_hash[:9]
-                    is_mailroom_worker = "By" in key
-                    cur.execute(
-                        "INSERT INTO persons (wpi_id, box_number, is_mailroom_worker) VALUES (%s, %s, %s) ON CONFLICT (wpi_id) DO NOTHING RETURNING wpi_id",
-                        (wpi_id, person_hash, is_mailroom_worker)
-                    )
-                    result = cur.fetchone()
-                    if result:
-                        persons[person_hash] = result[0]
-                    else:
-                        cur.execute("SELECT wpi_id FROM persons WHERE box_number = %s", (person_hash,))
-                        persons[person_hash] = cur.fetchone()[0]
+                packages_to_insert.append((
+                    carrier_id,
+                    recipient_id,
+                    tracking_num,
+                    service_type,
+                    date_shipped,
+                    total_emissions,
+                    distance
+                ))
 
-            # Insert package
-            recipient_hash = row.get('Delivered To') or row.get('Routed To') or row.get('Stored To')
-            if recipient_hash and recipient_hash in persons:
-                recipient_id = persons[recipient_hash]
-                cur.execute(
-                    "INSERT INTO packages (carrier_id, tracking_number, recipient_id) VALUES (%s, %s, %s) RETURNING package_id",
-                    (carriers[carrier_name], row['Tracking Number'], recipient_id)
-                )
-                package_id = cur.fetchone()[0]
-            else:
-                print(
-                    f"Skipping package with tracking number {row['Tracking Number']} due to missing recipient information.")
-                continue
+        insert_sql = """
+        INSERT INTO packages (
+            carrier_id, recipient_id, tracking_number, service_type, 
+            date_shipped, total_emissions_kg, distance_traveled
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (tracking_number) DO NOTHING;
+        """
 
-            # Insert transactions
-            if row.get('Date Stored'):
-                cur.execute(
-                    "INSERT INTO transactions (date, transaction_type, locker, location, package_id, worker_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (row['Date Stored'], 'stored', f"{row['Locker Bank Name']} {row['Locker Number']}",
-                     row['stored Location1'], package_id, persons[row['Stored By']])
-                )
-            if row.get('Date Routed'):
-                cur.execute(
-                    "INSERT INTO transactions (date, transaction_type, location, package_id, worker_id) VALUES (%s, %s, %s, %s, %s)",
-                    (row['Date Routed'], 'routed', row['Routed Location1'], package_id, persons[row['Routed By']])
-                )
-            if row.get('Date Delivered'):
-                cur.execute(
-                    "INSERT INTO transactions (date, transaction_type, locker, location, package_id, worker_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (row['Date Delivered'], 'delivered', f"{row['Locker Bank Name']} {row['Locker Number']}",
-                     row['Delivered Location1'], package_id, persons[row['Delivered By']])
-                )
+        count = 0
+        failed_fk = 0
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        # We must handle errors on each execute
+        for package_data in packages_to_insert:
+            try:
+                cur.execute(insert_sql, package_data)
+                count += 1
+            except psycopg2.Error as e:
+                # This catches the error (like FK violation)
+                # and ROLLS BACK the single failed statement
+                # so the transaction can continue.
+                cur.execute("ROLLBACK TO SAVEPOINT packages_loop")
+
+                if e.pgcode == '23503':  # foreign_key_violation
+                    failed_fk += 1
+                else:
+                    print(f"Skipping package {package_data[2]} due to error: {e}")
+
+        print(f"Attempted to insert {len(packages_to_insert)} packages.")
+        print(f"Successfully processed {count} package insertions.")
+        if failed_fk > 0:
+            print(f"Skipped {failed_fk} packages due to Foreign Key violations (e.g., service not in emissions table).")
+
+
+    except Exception as e:
+        print(f"Error populating packages: {e}", file=sys.stderr)
+        raise
+
+
+def populate_db():
+    conn = None
+    cur = None  # Define cur here so it's in scope for finally
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Populate in correct order to respect foreign key constraints
+
+        # 1. carriers (no dependencies)
+        populate_carriers(cur)
+        conn.commit()
+
+        # 2. emissions (no dependencies)
+        populate_emissions(cur)
+        conn.commit()
+
+        # 3. persons (no dependencies)
+        populate_persons(cur)
+        conn.commit()
+
+        # 4. packages (depends on carriers, persons, emissions)
+
+        # Create a savepoint for the package loop
+        # This allows us to roll back *individual* failed inserts
+        # without aborting the whole transaction
+        cur.execute("SAVEPOINT packages_loop")
+
+        populate_packages(cur)
+        conn.commit()
+
+        print("\nDatabase population complete!")
+
+    except Exception as e:
+        print(f"An error occurred: {e}", file=sys.stderr)
+        if conn:
+            conn.rollback()  # Roll back changes on error
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+            print("Database connection closed.")
 
 
 if __name__ == "__main__":
