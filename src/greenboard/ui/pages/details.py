@@ -10,11 +10,6 @@ st.set_page_config(page_title="Details", page_icon="📦")
 st.markdown("# Anonymous Shark")
 st.markdown("### Civil Engineering Major")
 
-# Create sample data for testing (each entry represents a package, including the date delivered, weight, carrier, and carbon emissions)
-# data = [
-#     {"Date": "2024-09-01", "Weight (lbs)": 5, "Carrier": "FedEx", "Carbon Emissions (kg CO2e)": 0.4936, "Transport Mode": "Air", "Source": "Addison, IL", "Desitination": "Worcester, MA", "Distance (miles)": 831, "Main Transit Emissions (kg CO2e)": 0.4936, "Last Mile Emissions (kg CO2e)": 0.0009, "Tree needed (1 year)": 0.02, "Equivalent miles driven": 1.2},
-# ]
-
 # Package data format:
 # PackageRead(
 #     package_id=r[0],
@@ -27,7 +22,7 @@ st.markdown("### Civil Engineering Major")
 # )
 
 try:
-    data = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/").json()) 
+    data = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/?limit=100").json()) 
 except requests.exceptions.RequestException:
     st.error("❌ Cannot connect to API")
 
@@ -52,30 +47,38 @@ df = pd.DataFrame(data)
 st.markdown("## Package Delivery Timeline")
 
 # Convert dates to datetime for proper sorting
-df['package_id'] = pd.to_datetime(df['package_id'])
-df_sorted = df.sort_values('package_id')
+df['date_shipped'] = pd.to_datetime(df['date_shipped'])
+df_sorted = df.sort_values('date_shipped', ascending=False)
 
 for index, row in df_sorted.iterrows():    
+    # Skip entries with missing data
+    if pd.isnull(row['total_emissions_kg']):
+        continue
+
     # Card container with border styling
     with st.container(border=True):
         # Header with date and package number prominently displayed
-        st.markdown(f"### 📦 Package {index + 1} - {row['package_id'].strftime('%B %d, %Y')}")
+        st.markdown(f"### 📦 Package {index + 1}")
+        st.caption(f"Delivered on {row['date_shipped'].strftime('%B %d, %Y')}")
         
         # Package details in a clean layout
         col_details1, col_details2 = st.columns(2)
         
         with col_details1:
+            # st.markdown(f"**Distance:** {row['distance_traveled']} km")
+            st.metric("Distance", row['distance_traveled'])
             # st.metric("Weight", f"{row['Weight (lbs)']} lbs")
-            st.metric("Carrier", row['date_shipped'])
+            st.metric("Carrier", row['carrier_name'])
         
         with col_details2:
+            # st.write(row)
             st.metric("Transport Mode", row['service_type'])
             st.metric("Carbon Emissions", f"{row['total_emissions_kg']:.2f} kg CO2e")
 
-        with st.expander("📍 View Route Details", expanded=False):
+        # with st.expander("📍 View Route Details", expanded=False):
             # st.markdown(f"**Source:** {row['Source']}")
             # st.markdown(f"**Destination:** {row['Desitination']}")
-            st.markdown(f"**Distance:** {row['distance_traveled']} km")
+            # st.markdown(f"**Distance:** {row['distance_traveled']} km")
 
         # with st.expander("🚛 Emission Breakdown", expanded=False):
         #     st.markdown(f"**Main Transit Emissions:** {row['Main Transit Emissions (kg CO2e)']:.4f} kg CO2e")

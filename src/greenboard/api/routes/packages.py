@@ -8,7 +8,7 @@ from ..models import Package, Carrier, Emission, PackageRead
 router = APIRouter(prefix="/packages", tags=["packages"])
 
 
-@router.get("/", response_model=List[Package])
+@router.get("/", response_model=List[PackageRead])
 async def get_packages(
     page: int = Query(1, ge=1, description="Page number, starting from 1"),
     limit: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
@@ -33,6 +33,8 @@ async def get_packages(
     )
     
     results = db.exec(statement).all()
+
+    print(results)
     
     return [
         PackageRead(
