@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from .routes import database
+from .routes import packages
+from .routes import leaderboards
 
 app = FastAPI(
     title="WPI Greenboard API",
@@ -9,6 +11,8 @@ app = FastAPI(
 
 # Include all route modules
 app.include_router(database.router)
+app.include_router(packages.router)
+app.include_router(leaderboards.router)
 
 @app.get("/")
 async def root():

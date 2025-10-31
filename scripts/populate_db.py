@@ -232,7 +232,18 @@ def populate_packages(cur):
                     distance = None
 
                 # As discovered, date_shipped is not available. Set to NULL.
-                date_shipped = None
+                date_shipped = row.get('Delivered Date Time')
+                # Convert date_shipped from "September 06, 2025 07:58 PM" to "2025-09-06 19:58:00"
+                if date_shipped:
+                    try:
+                        date_shipped = time.strftime(
+                            "%Y-%m-%d %H:%M:%S",
+                            time.strptime(date_shipped, "%B %d, %Y %I:%M %p")
+                        )
+                    except ValueError:
+                        date_shipped = None
+                else:
+                    date_shipped = None
 
                 packages_to_insert.append((
                     carrier_id,
