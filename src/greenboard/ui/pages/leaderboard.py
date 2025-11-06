@@ -161,7 +161,8 @@ else:
             st.session_state.selected_student = {
                 "rank": rank,
                 "name": name,
-                # "major": major
+                # "major": major,
+                "wpi_id": row.get("wpi_id", None)
             }
             st.switch_page("pages/details.py")
     
