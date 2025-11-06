@@ -7,8 +7,15 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="Details", page_icon="📦")
 
-st.markdown("# Anonymous Shark")
-st.markdown("### Civil Engineering Major")
+selected_student = st.session_state.get("selected_student", None)
+
+if selected_student:
+    st.markdown(f"# {selected_student['name']}")
+    if 'major' in selected_student and selected_student['major'] is not None:
+        st.markdown(f"### {selected_student['major']} Major")
+else:
+    st.markdown("# Student Details")
+    st.markdown("### No student selected")
 
 # Package data format:
 # PackageRead(

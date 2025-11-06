@@ -33,8 +33,6 @@ async def get_packages(
     )
     
     results = db.exec(statement).all()
-
-    print(results)
     
     return [
         PackageRead(
