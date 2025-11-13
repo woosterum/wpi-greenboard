@@ -16,6 +16,8 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import json
 import time
+import pickle
+import os
 
 
 # ============================================================================
@@ -145,83 +147,124 @@ class EmissionResult:
 # ============================================================================
 
 class DistanceCalculator:
-    """Handles geocoding and distance calculations"""
+    """Handles geocoding and distance calculations with persistent city-level caching"""
     
-    def __init__(self, user_agent: str = "wpi_greenboard"):
-        self.geocoder = Nominatim(user_agent=user_agent)
-        self.cache = {}
+    def __init__(self, user_agent: str = "wpi_greenboard", cache_file: str = ".geocache.pkl"):
+        self.geocoder = Nominatim(user_agent=user_agent, timeout=10)
+        self.cache_file = cache_file
+        self.cache = self._load_cache()
+        self.last_geocode_time = 0
+        
+    def _load_cache(self) -> dict:
+        """Load persistent geocoding cache from disk"""
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, 'rb') as f:
+                    cache = pickle.load(f)
+                    print(f"✓ Loaded {len(cache)} cached locations")
+                    return cache
+            except Exception:
+                return {}
+        return {}
     
-    def geocode_address(self, address: Address, max_retries: int = 3) -> Tuple[Optional[float], Optional[float]]:
+    def _save_cache(self):
+        """Save geocoding cache to disk"""
+        try:
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(self.cache, f)
+        except Exception:
+            pass
+    
+    def _rate_limit(self):
+        """Ensure at least 1 second between geocoding requests"""
+        current_time = time.time()
+        elapsed = current_time - self.last_geocode_time
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
+        self.last_geocode_time = time.time()
+    
+    def _make_cache_key(self, city: Optional[str], state: Optional[str], country: Optional[str]) -> str:
+        """Create a cache key from city location"""
+        parts = []
+        if city:
+            parts.append(city.lower().strip())
+        if state:
+            parts.append(state.lower().strip())
+        if country:
+            parts.append(country.lower().strip())
+        return "|".join(parts)
+    
+    def geocode_city(self, city: Optional[str], state: Optional[str], 
+                     country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+        """Geocode a city location (faster and more reliable than full addresses)"""
+        cache_key = self._make_cache_key(city, state, country)
+        if not cache_key:
+            return None, None
+        
+        # Check cache first
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        # Build query - city level only
+        query_parts = []
+        if city:
+            query_parts.append(city)
+        if state:
+            query_parts.append(state)
+        if country:
+            query_parts.append(country)
+        
+        if not query_parts:
+            return None, None
+        
+        query = ", ".join(query_parts)
+        
+        try:
+            self._rate_limit()
+            location = self.geocoder.geocode(query)
+            
+            if location:
+                coords = (location.latitude, location.longitude)
+                self.cache[cache_key] = coords
+                self._save_cache()
+                return coords
+        except Exception:
+            pass
+        
+        # Cache the failure to avoid retrying
+        self.cache[cache_key] = (None, None)
+        return None, None
+    
+    def geocode_address(self, address: Address, max_retries: int = 1) -> Tuple[Optional[float], Optional[float]]:
+        """Geocode using city-level data from address"""
         if address.latitude and address.longitude:
             return address.latitude, address.longitude
         
-        addr_string = address.to_string()
-        if addr_string in self.cache:
-            return self.cache[addr_string]
-        
-        for attempt in range(max_retries):
-            try:
-                location = self.geocoder.geocode(addr_string, timeout=10)
-                
-                if location:
-                    coords = (location.latitude, location.longitude)
-                    self.cache[addr_string] = coords
-                    print(f"  ✓ Geocoded: {address.city or address.postal_code} → {coords}")
-                    return coords
-                else:
-                    # Try city + country (good for international with limited data)
-                    if address.city and address.country:
-                        fallback_string = f"{address.city}, {address.country}"
-                        print(f"  🔍 Trying city+country: {fallback_string}")
-                        location = self.geocoder.geocode(fallback_string, timeout=10)
-                        if location:
-                            coords = (location.latitude, location.longitude)
-                            self.cache[addr_string] = coords
-                            print(f"  ✓ Geocoded (city+country): {fallback_string} → {coords}")
-                            return coords
-                    
-                    # Try postal code + country
-                    if address.postal_code and address.country:
-                        fallback_string = f"{address.postal_code}, {address.country}"
-                        print(f"  🔍 Trying postal+country: {fallback_string}")
-                        location = self.geocoder.geocode(fallback_string, timeout=10)
-                        if location:
-                            coords = (location.latitude, location.longitude)
-                            self.cache[addr_string] = coords
-                            print(f"  ✓ Geocoded (postal+country): {fallback_string} → {coords}")
-                            return coords
-                
-                print(f"  ⚠️ Could not geocode: {addr_string}")
-                return None, None
-                
-            except (GeocoderTimedOut, GeocoderServiceError) as e:
-                if attempt < max_retries - 1:
-                    print(f"  ⚠️ Geocoding attempt {attempt + 1} failed, retrying...")
-                    time.sleep(1)
-                else:
-                    print(f"  ❌ Geocoding failed after {max_retries} attempts: {e}")
-                    return None, None
-        
-        return None, None
+        # Use city-level geocoding (much faster)
+        return self.geocode_city(address.city, address.state, address.country)
     
     def calculate_distance(self, origin: Address, destination: Address, 
                           service_type: str = 'ground') -> float:
-        print("\n📍 Calculating distance...")
+        """Calculate distance between cities or use service-based estimates"""
         
-        origin_coords = self.geocode_address(origin)
-        dest_coords = self.geocode_address(destination)
+        # Try geocoding cities
+        origin_coords = self.geocode_city(origin.city, origin.state, origin.country)
+        dest_coords = self.geocode_city(destination.city, destination.state, destination.country)
         
+        # If both geocoded successfully, calculate actual distance
         if origin_coords[0] and dest_coords[0]:
             distance = geodesic(origin_coords, dest_coords).kilometers
-            print(f"  ✓ Calculated distance: {distance:.2f} km ({distance * 0.621371:.2f} miles)")
             return distance
         
-        print("  ⚠️ Using estimated distance (geocoding unavailable)")
+        # Fallback to service-based estimates
+        is_international = (origin.country != destination.country) if (origin.country and destination.country) else False
         
-        if origin.country and destination.country and origin.country != destination.country:
+        if is_international:
             return DEFAULT_DISTANCES['international']
         
-        if 'air' in service_type.lower():
+        # Check service type for air vs ground
+        service_lower = service_type.lower()
+        if any(keyword in service_lower for keyword in ['air', 'express', 'overnight', 'next day', 'priority']):
             return DEFAULT_DISTANCES['domestic_air']
         else:
             return DEFAULT_DISTANCES['domestic_ground']
@@ -290,7 +333,6 @@ class UPSAdapter(CarrierAdapter):
                 auth=(credentials['client_id'], credentials['client_secret'])
             )
             response.raise_for_status()
-            print("✅ UPS: Successfully authenticated")
             return response.json().get("access_token")
         except requests.exceptions.RequestException as e:
             print(f"❌ UPS authentication error: {e}")
@@ -307,7 +349,6 @@ class UPSAdapter(CarrierAdapter):
         try:
             response = requests.get(track_url, headers=headers)
             response.raise_for_status()
-            print(f"✅ UPS: Retrieved tracking data for {tracking_number}")
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"❌ UPS tracking error: {e}")
@@ -363,10 +404,8 @@ class UPSAdapter(CarrierAdapter):
                 
                 if addr_type == 'ORIGIN':
                     origin = parsed_addr
-                    print(f"  ✓ Origin: {origin.city}, {origin.country}")
                 elif addr_type == 'DESTINATION':
                     destination = parsed_addr
-                    print(f"  ✓ Destination: {destination.city}, {destination.country}")
             
             # Service information
             service = package.get('service', {})
@@ -432,7 +471,6 @@ class USPSAdapter(CarrierAdapter):
         try:
             response = requests.post(token_url, json=payload, headers=headers)
             response.raise_for_status()
-            print("✅ USPS: Successfully authenticated")
             return response.json().get("access_token")
         except requests.exceptions.RequestException as e:
             print(f"❌ USPS authentication error: {e}")
@@ -453,7 +491,6 @@ class USPSAdapter(CarrierAdapter):
         try:
             response = requests.get(track_url, headers=headers, params=params)
             response.raise_for_status()
-            print(f"✅ USPS: Retrieved tracking data for {tracking_number}")
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"❌ USPS tracking error: {e}")
@@ -502,7 +539,6 @@ class USPSAdapter(CarrierAdapter):
             service_desc = track_info.get('classDescription', 'Priority Mail')
             tracking_num = track_info.get('trackingNumber', 'Unknown')
             
-            print(f"  ✓ Service: {service_desc}")
             
             return PackageInfo(
                 tracking_number=tracking_num,
@@ -565,7 +601,6 @@ class FedExAdapter(CarrierAdapter):
         try:
             response = requests.post(token_url, data=payload, headers=headers)
             response.raise_for_status()
-            print("✅ FedEx: Successfully authenticated")
             return response.json().get("access_token")
         except requests.exceptions.RequestException as e:
             print(f"❌ FedEx authentication error: {e}")
@@ -594,7 +629,6 @@ class FedExAdapter(CarrierAdapter):
         try:
             response = requests.post(track_url, json=payload, headers=headers)
             response.raise_for_status()
-            print(f"✅ FedEx: Retrieved tracking data for {tracking_number}")
             # print(response.json())
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -625,7 +659,6 @@ class FedExAdapter(CarrierAdapter):
                     else:
                         weight_kg = weight_value * 0.453592
             
-            print(f"  ✓ Weight: {weight_kg:.2f} kg")
             
             # Addresses
             origin = None
@@ -658,7 +691,6 @@ class FedExAdapter(CarrierAdapter):
             service_desc = service_detail.get('description', 'FedEx Ground')
             tracking_num = track_results.get('trackingNumber', 'Unknown')
             
-            print(f"  ✓ Service: {service_desc}")
             
             return PackageInfo(
                 tracking_number=tracking_num,
@@ -725,7 +757,6 @@ class DHLAdapter(CarrierAdapter):
         try:
             response = requests.post(token_url, headers=headers, params=params)
             response.raise_for_status()
-            print("✅ DHL: Successfully authenticated")
             return response.json().get("access_token")
         except requests.exceptions.RequestException as e:
             print(f"❌ DHL authentication error: {e}")
@@ -748,7 +779,6 @@ class DHLAdapter(CarrierAdapter):
         try:
             response = requests.get(track_url, headers=headers, params=params)
             response.raise_for_status()
-            print(f"✅ DHL: Retrieved tracking data for {tracking_number}")
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"❌ DHL tracking error: {e}")
@@ -777,7 +807,6 @@ class DHLAdapter(CarrierAdapter):
                 else:
                     weight_kg = weight_value
             
-            print(f"  ✓ Weight: {weight_kg:.2f} kg")
             
             # Addresses
             origin = None
@@ -809,7 +838,6 @@ class DHLAdapter(CarrierAdapter):
             service_desc = shipment.get('service', {}).get('name', 'Express Worldwide')
             tracking_num = shipment.get('id', 'Unknown')
             
-            print(f"  ✓ Service: {service_desc}")
             
             return PackageInfo(
                 tracking_number=tracking_num,
@@ -882,7 +910,6 @@ class AmazonAdapter(CarrierAdapter):
     
     def authenticate(self, credentials: Dict[str, str]) -> Optional[str]:
         """Amazon doesn't require authentication for our estimation approach"""
-        print("✅ Amazon: Using intelligent estimation mode")
         return "ESTIMATION_MODE"
     
     def _get_deterministic_random(self, tracking_number: str, seed_suffix: str = "") -> float:
@@ -1051,10 +1078,6 @@ class AmazonAdapter(CarrierAdapter):
             longitude=-71.8023
         )
         
-        print(f"  ✓ Weight: {weight_kg:.2f} kg ({weight_kg * 2.20462:.2f} lbs)")
-        print(f"  ✓ Origin: {origin.city}, {origin.state} (Amazon {warehouse_code})")
-        print(f"  ✓ Destination: {destination.city}, {destination.state}")
-        print(f"  ✓ Service: {service_desc}")
         if dimensions:
             print(f"  📏 Dimensions: {dimensions[0]}×{dimensions[1]}×{dimensions[2]} cm")
         
@@ -1082,9 +1105,9 @@ class CarrierFactory:
     
     _adapters = {
         'ups': UPSAdapter,
-        'usps': USPSAdapter,
+        # 'usps': USPSAdapter,  # Disabled - credentials not working
         'fedex': FedExAdapter,
-        'dhl': DHLAdapter,
+        # 'dhl': DHLAdapter,  # Disabled - not working currently
         'amazon': AmazonAdapter,
     }
     
@@ -1223,79 +1246,16 @@ class EmissionsCalculator:
 # MAIN INTERFACE
 # ============================================================================
 
-def calculate_package_emissions(carrier: str, tracking_number: str,
-                               credentials: Dict[str, str],
-                               dimensions: Optional[Tuple[float, float, float]] = None,
-                               **adapter_kwargs) -> Optional[EmissionResult]:
+def print_emissions_report(result: EmissionResult):
     """
-    Universal function to calculate emissions for any supported carrier.
+    Print a detailed emissions report for a single package.
+    Separate function so batch processing can skip printing.
     
     Args:
-        carrier: Carrier name (ups, usps, fedex, dhl)
-        tracking_number: Package tracking number
-        credentials: Authentication credentials (carrier-specific)
-        dimensions: Optional package dimensions (L, W, H in cm)
-        **adapter_kwargs: Additional carrier-specific arguments
-    
-    Returns:
-        EmissionResult with calculation details or None if failed
-    
-    Example:
-        result = calculate_package_emissions(
-            carrier='ups',
-            tracking_number='1Z999AA10123456784',
-            credentials={
-                'client_id': 'your_client_id',
-                'client_secret': 'your_client_secret'
-            },
-            dimensions=(30, 20, 15)
-        )
+        result: EmissionResult object with calculation details
     """
-    print(f"\n{'='*70}")
-    print(f"🌱 WPI Greenboard - Package Emissions Calculator")
-    print(f"Carrier: {carrier.upper()}")
-    print(f"Tracking #: {tracking_number}")
-    print(f"{'='*70}\n")
+    package_info = result.package_info
     
-    # Create carrier adapter
-    try:
-        adapter = CarrierFactory.create_adapter(carrier, **adapter_kwargs)
-    except ValueError as e:
-        print(f"❌ {e}")
-        return None
-    
-    # Step 1: Authentication
-    print(f"🔐 Step 1: Authenticating with {carrier.upper()}...")
-    token = adapter.authenticate(credentials)
-    if not token:
-        return None
-    
-    # Step 2: Fetch tracking data
-    print(f"\n📦 Step 2: Fetching tracking data...")
-    tracking_data = adapter.get_tracking_data(token, tracking_number)
-    if not tracking_data:
-        return None
-    
-    # Step 3: Parse package information
-    print(f"\n📄 Step 3: Parsing package information...")
-    package_info = adapter.parse_tracking_data(tracking_data)
-    if not package_info:
-        return None
-    
-    # Add dimensions if provided
-    if dimensions:
-        package_info.dimensions = dimensions
-        print(f"  📏 Added dimensions: {dimensions[0]}x{dimensions[1]}x{dimensions[2]} cm")
-    
-    # Step 4: Calculate emissions
-    print(f"\n🌍 Step 4: Calculating carbon emissions...")
-    calculator = EmissionsCalculator()
-    result = calculator.calculate_from_package_info(package_info)
-    
-    if not result:
-        return None
-    
-    # Display final results
     print(f"\n{'='*70}")
     print(f"📊 CARBON EMISSIONS REPORT")
     print(f"{'='*70}\n")
@@ -1328,17 +1288,85 @@ def calculate_package_emissions(carrier: str, tracking_number: str,
     print(f"{'='*70}\n")
     
     # Environmental context
-    trees_to_offset = result.total_emissions_kg / 21  # ~21 kg CO2 per tree per year
-    miles_driven = result.total_emissions_kg / 0.404  # ~0.404 kg CO2 per mile
+    trees_to_offset = result.total_emissions_kg / 21
+    miles_driven = result.total_emissions_kg / 0.404
     
     print(f"Environmental Context:")
     print(f"  🌳 Trees needed (1 year): {trees_to_offset:.2f}")
     print(f"  🚗 Equivalent to driving: {miles_driven:.1f} miles")
     print(f"{'='*70}\n")
+
+
+
+
+def calculate_package_emissions(carrier: str, tracking_number: str,
+                               credentials: Dict[str, str],
+                               dimensions: Optional[Tuple[float, float, float]] = None,
+                               verbose: bool = False,
+                               **adapter_kwargs) -> Optional[EmissionResult]:
+    """
+    Universal function to calculate emissions for any supported carrier.
+    
+    Args:
+        carrier: Carrier name (ups, usps, fedex, dhl)
+        tracking_number: Package tracking number
+        credentials: Authentication credentials (carrier-specific)
+        dimensions: Optional package dimensions (L, W, H in cm)
+        **adapter_kwargs: Additional carrier-specific arguments
+    
+    Returns:
+        EmissionResult with calculation details or None if failed
+    
+    Example:
+        result = calculate_package_emissions(
+            carrier='ups',
+            tracking_number='1Z999AA10123456784',
+            credentials={
+                'client_id': 'your_client_id',
+                'client_secret': 'your_client_secret'
+            },
+            dimensions=(30, 20, 15)
+        )
+        verbose: If True, print detailed report (default: False for batch processing)
+    """
+    # Create carrier adapter
+    try:
+        adapter = CarrierFactory.create_adapter(carrier, **adapter_kwargs)
+    except ValueError as e:
+        print(f"❌ {e}")
+        return None
+    
+    # Authentication
+    token = adapter.authenticate(credentials)
+    if not token:
+        return None
+    
+    # Fetch tracking data
+    tracking_data = adapter.get_tracking_data(token, tracking_number)
+    if not tracking_data:
+        return None
+    
+    # Parse package information
+    package_info = adapter.parse_tracking_data(tracking_data)
+    if not package_info:
+        return None
+    
+    # Add dimensions if provided
+    if dimensions:
+        package_info.dimensions = dimensions
+    
+    # Calculate emissions
+    calculator = EmissionsCalculator()
+    result = calculator.calculate_from_package_info(package_info)
+    
+    if not result:
+        return None
+    
+    # Print detailed report if verbose mode
+    if verbose:
+        print_emissions_report(result)
     
     return result
-
-
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
@@ -1378,7 +1406,6 @@ def save_emissions_report(result: EmissionResult, filename: str = 'emissions_rep
     with open(filename, 'w') as f:
         json.dump(output, f, indent=2)
     
-    print(f"✅ Report saved to {filename}")
 
 
 # ============================================================================
