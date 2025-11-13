@@ -31,7 +31,7 @@ async def get_available_majors(db: Session = Depends(get_session)):
     }
 
 
-@router.get("/person/wpi_id")
+@router.get("/person/{wpi_id}")
 async def get_person_emissions_timeline(
     wpi_id: str,
     db: Session = Depends(get_session),

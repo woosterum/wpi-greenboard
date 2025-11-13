@@ -31,8 +31,10 @@ else:
 try:
     if selected_student and "wpi_id" in selected_student:
         df = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/student/{selected_student['wpi_id']}").json())
+        timeline_data = requests.get(f"{API_BASE_URL}/timeline/person/{selected_student['wpi_id']}").json()
     else:
         df = pd.DataFrame()
+        timeline_data = None
 except requests.exceptions.RequestException:
     st.error("❌ Cannot connect to API")
     df = pd.DataFrame()
@@ -55,6 +57,14 @@ weight_emission_factors = {
 if not df.empty:
     # Show a timeline view of each package, where each has a card with its details, including a formula showing how the carbon emissions were calculated
     st.markdown("## Package Delivery Timeline")
+
+    if timeline_data is not None and "timeline" in timeline_data:
+        timeline_df = pd.DataFrame(timeline_data["timeline"])
+
+        if timeline_df.shape[0] > 1:
+            # Plot the timeline of emissions over time
+            st.area_chart(timeline_df.set_index('period')['package_count'], height=200, width=700)
+
 
     # Convert dates to datetime for proper sorting
     df['date_shipped'] = pd.to_datetime(df['date_shipped'])
