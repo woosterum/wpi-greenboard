@@ -7,8 +7,15 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="Details", page_icon="📦")
 
-st.markdown("# Anonymous Shark")
-st.markdown("### Civil Engineering Major")
+selected_student = st.session_state.get("selected_student", None)
+
+if selected_student:
+    st.markdown(f"# {selected_student['name']}")
+    if 'major' in selected_student and selected_student['major'] is not None:
+        st.markdown(f"### {selected_student['major']} Major")
+else:
+    st.markdown("# Student Details")
+    st.markdown("### No student selected")
 
 # Package data format:
 # PackageRead(
@@ -22,9 +29,13 @@ st.markdown("### Civil Engineering Major")
 # )
 
 try:
-    data = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/?limit=100").json()) 
+    if selected_student and "wpi_id" in selected_student:
+        df = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/student/{selected_student['wpi_id']}").json())
+    else:
+        df = pd.DataFrame()
 except requests.exceptions.RequestException:
     st.error("❌ Cannot connect to API")
+    df = pd.DataFrame()
 
 # Assign emissions constants based on transport mode, carrier, and weight
 transit_emission_factors = {
@@ -40,52 +51,55 @@ weight_emission_factors = {
     (10, float('inf')): 2.5  # weight > 10 lbs
 }
 
-# Convert the data into a pandas DataFrame
-df = pd.DataFrame(data)
 
-# Show a timeline view of each package, where each has a card with its details, including a formula showing how the carbon emissions were calculated
-st.markdown("## Package Delivery Timeline")
+if not df.empty:
+    # Show a timeline view of each package, where each has a card with its details, including a formula showing how the carbon emissions were calculated
+    st.markdown("## Package Delivery Timeline")
 
-# Convert dates to datetime for proper sorting
-df['date_shipped'] = pd.to_datetime(df['date_shipped'])
-df_sorted = df.sort_values('date_shipped', ascending=False)
+    # Convert dates to datetime for proper sorting
+    df['date_shipped'] = pd.to_datetime(df['date_shipped'])
+    df_sorted = df.sort_values('date_shipped', ascending=False)
 
-for index, row in df_sorted.iterrows():    
-    # Skip entries with missing data
-    if pd.isnull(row['total_emissions_kg']):
-        continue
+    i = 0
 
-    # Card container with border styling
-    with st.container(border=True):
-        # Header with date and package number prominently displayed
-        st.markdown(f"### 📦 Package {index + 1}")
-        st.caption(f"Delivered on {row['date_shipped'].strftime('%B %d, %Y')}")
-        
-        # Package details in a clean layout
-        col_details1, col_details2 = st.columns(2)
-        
-        with col_details1:
-            # st.markdown(f"**Distance:** {row['distance_traveled']} km")
-            st.metric("Distance", row['distance_traveled'])
-            # st.metric("Weight", f"{row['Weight (lbs)']} lbs")
-            st.metric("Carrier", row['carrier_name'])
-        
-        with col_details2:
-            # st.write(row)
-            st.metric("Transport Mode", row['service_type'])
-            st.metric("Carbon Emissions", f"{row['total_emissions_kg']:.2f} kg CO2e")
+    for index, row in df_sorted.iterrows():            
+        # Skip entries with missing data
+        if pd.isnull(row['total_emissions_kg']):
+            continue
 
-        # with st.expander("📍 View Route Details", expanded=False):
-            # st.markdown(f"**Source:** {row['Source']}")
-            # st.markdown(f"**Destination:** {row['Desitination']}")
-            # st.markdown(f"**Distance:** {row['distance_traveled']} km")
+        i += 1
 
-        # with st.expander("🚛 Emission Breakdown", expanded=False):
-        #     st.markdown(f"**Main Transit Emissions:** {row['Main Transit Emissions (kg CO2e)']:.4f} kg CO2e")
-        #     st.markdown(f"**Last Mile Emissions:** {row['Last Mile Emissions (kg CO2e)']:.4f} kg CO2e")
+        # Card container with border styling
+        with st.container(border=True):
+            # Header with date and package number prominently displayed
+            st.markdown(f"### 📦 Package {i}")
+            st.caption(f"Delivered on {row['date_shipped'].strftime('%B %d, %Y')}")
+            
+            # Package details in a clean layout
+            col_details1, col_details2 = st.columns(2)
+            
+            with col_details1:
+                # st.markdown(f"**Distance:** {row['distance_traveled']} km")
+                st.metric("Distance", row['distance_traveled'])
+                # st.metric("Weight", f"{row['Weight (lbs)']} lbs")
+                st.metric("Carrier", row['carrier_name'])
+            
+            with col_details2:
+                # st.write(row)
+                st.metric("Transport Mode", row['service_type'])
+                st.metric("Carbon Emissions", f"{row['total_emissions_kg']:.2f} kg CO2e")
 
-        # with st.expander("🌳 Environmental Impact", expanded=False):
-        #     st.markdown(f"**Trees Needed (1 year):** {row['Tree needed (1 year)']:.2f}")
-        #     st.markdown(f"**Equivalent Miles Driven:** {row['Equivalent miles driven']:.2f} miles")
+            # with st.expander("📍 View Route Details", expanded=False):
+                # st.markdown(f"**Source:** {row['Source']}")
+                # st.markdown(f"**Destination:** {row['Desitination']}")
+                # st.markdown(f"**Distance:** {row['distance_traveled']} km")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+            # with st.expander("🚛 Emission Breakdown", expanded=False):
+            #     st.markdown(f"**Main Transit Emissions:** {row['Main Transit Emissions (kg CO2e)']:.4f} kg CO2e")
+            #     st.markdown(f"**Last Mile Emissions:** {row['Last Mile Emissions (kg CO2e)']:.4f} kg CO2e")
+
+            # with st.expander("🌳 Environmental Impact", expanded=False):
+            #     st.markdown(f"**Trees Needed (1 year):** {row['Tree needed (1 year)']:.2f}")
+            #     st.markdown(f"**Equivalent Miles Driven:** {row['Equivalent miles driven']:.2f} miles")
+
+        st.markdown("<br>", unsafe_allow_html=True)

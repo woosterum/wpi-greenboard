@@ -44,6 +44,7 @@ class Package(SQLModel, table=True):
     date_shipped: Optional[datetime] = None
     total_emissions_kg: Optional[float] = None
     distance_traveled: Optional[float] = None
+    recipient_id: Optional[str] = Field(default=None, foreign_key="persons.wpi_id", max_length=9)
     
     # Relationships
     carrier: Optional[Carrier] = Relationship(back_populates="packages")
