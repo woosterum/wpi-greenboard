@@ -31,7 +31,7 @@ else:
 try:
     if selected_student and "wpi_id" in selected_student:
         df = pd.DataFrame(requests.get(f"{API_BASE_URL}/packages/student/{selected_student['wpi_id']}").json())
-        timeline_data = requests.get(f"{API_BASE_URL}/timeline/person/{selected_student['wpi_id']}").json()
+        timeline_data = requests.get(f"{API_BASE_URL}/timeline/person/{selected_student['wpi_id']}?interval=day").json()
     else:
         df = pd.DataFrame()
         timeline_data = None
@@ -61,6 +61,10 @@ if not df.empty:
     if timeline_data is not None and "timeline" in timeline_data:
         timeline_df = pd.DataFrame(timeline_data["timeline"])
 
+        # Skip any where the period is null or empty
+        if "period" in timeline_df.columns:
+            timeline_df = timeline_df[timeline_df["period"].notnull() & (timeline_df["period"].astype(str) != "None")]
+
         if timeline_df.shape[0] > 1:
             # Plot the timeline of emissions over time
             st.area_chart(timeline_df.set_index('period')['package_count'], height=200, width=700)
@@ -77,13 +81,18 @@ if not df.empty:
         if pd.isnull(row['total_emissions_kg']):
             continue
 
+        try:
+            date_shipped = row['date_shipped'].strftime('%B %d, %Y')
+        except Exception:
+            date_shipped = "Unknown Date"
+
         i += 1
 
         # Card container with border styling
         with st.container(border=True):
             # Header with date and package number prominently displayed
             st.markdown(f"### 📦 Package {i}")
-            st.caption(f"Delivered on {row['date_shipped'].strftime('%B %d, %Y')}")
+            st.caption(f"Delivered on {date_shipped}")
             
             # Package details in a clean layout
             col_details1, col_details2 = st.columns(2)
@@ -113,3 +122,8 @@ if not df.empty:
             #     st.markdown(f"**Equivalent Miles Driven:** {row['Equivalent miles driven']:.2f} miles")
 
         st.markdown("<br>", unsafe_allow_html=True)
+
+    # Add an alert at the bottom indicating the number of packages that weren't shown due to missing data
+    missing_data_count = df['total_emissions_kg'].isnull().sum()
+    if missing_data_count > 0:
+        st.warning(f"⚠️ {missing_data_count} packages were not shown due to missing emissions data.")

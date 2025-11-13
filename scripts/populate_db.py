@@ -233,12 +233,12 @@ def populate_packages(cur):
 
                 # As discovered, date_shipped is not available. Set to NULL.
                 date_shipped = row.get('Delivered Date Time')
-                # Convert date_shipped from "September 06, 2025 07:58 PM" to "2025-09-06 19:58:00"
+                # Convert date_shipped from 10/29/25 10:55 to 2025-10-29 10:55:00
                 if date_shipped:
                     try:
                         date_shipped = time.strftime(
                             "%Y-%m-%d %H:%M:%S",
-                            time.strptime(date_shipped, "%B %d, %Y %I:%M %p")
+                            time.strptime(date_shipped, "%m/%d/%y %H:%M")
                         )
                     except ValueError:
                         date_shipped = None
