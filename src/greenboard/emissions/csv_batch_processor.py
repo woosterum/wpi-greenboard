@@ -1,16 +1,22 @@
 """
-Batch CSV Processor for Package Emissions Calculator
+Batch CSV Processor for Package Emissions Calculator - OPTIMIZED VERSION
 
-Reads a CSV file with tracking numbers and calculates emissions for each package.
-Handles errors gracefully and exports results to a new CSV.
+Key improvements:
+- Concurrent processing using ThreadPoolExecutor
+- Removed mandatory 1s delay between calls
+- Progress bar shows actual progress
+- Reduced console output during processing
+- Optional rate limiting instead of fixed delays
 """
 
 import pandas as pd
 import time
 from typing import Dict, Optional, List
 from datetime import datetime
-from emissions_calculator import calculate_package_emissions, EmissionResult
+from emissions_calculator import calculate_package_emissions, EmissionResult, print_emissions_report
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 
 class BatchEmissionsProcessor:
@@ -32,14 +38,17 @@ class BatchEmissionsProcessor:
         self.credentials = credentials
         self.results = []
         self.errors = []
+        self.lock = Lock()  # For thread-safe access to shared lists
         
     def process_csv(self, 
                    input_file: str, 
                    output_file: str = None,
-                   delay_seconds: float = 1.0,
+                   delay_seconds: float = 0.0,
                    production: bool = False,
                    carrier_column: str = 'carrier',
-                   tracking_column: str = 'tracking_number') -> pd.DataFrame:
+                   tracking_column: str = 'tracking_number',
+                   max_workers: int = 10,
+                   verbose: bool = False) -> pd.DataFrame:
         """
         Process a CSV file with tracking numbers and calculate emissions.
         
@@ -51,22 +60,23 @@ class BatchEmissionsProcessor:
         Args:
             input_file: Path to input CSV file
             output_file: Path to output CSV file (default: input_file + '_emissions.csv')
-            delay_seconds: Delay between API calls to avoid rate limiting
+            delay_seconds: Delay between API calls to avoid rate limiting (default: 0)
             production: Use production environment (default: False for testing)
             carrier_column: Name of the carrier column (default: 'carrier')
             tracking_column: Name of the tracking number column (default: 'tracking_number')
+            max_workers: Number of concurrent threads (default: 10)
+            verbose: Show detailed progress for each package (default: False)
         
         Returns:
             DataFrame with results
         """
         print(f"\n{'='*80}")
-        print(f"🌱 WPI Greenboard - Batch Emissions Processor")
+        print(f"🌱 WPI Greenboard - Batch Emissions Processor (OPTIMIZED)")
         print(f"{'='*80}\n")
         
         # Read input CSV
+        from tqdm import tqdm
         try:
-            # import os
-            # print(os.getcwd())
             df = pd.read_csv(input_file)
             # Strip whitespace from column names
             df.columns = df.columns.str.strip()
@@ -77,7 +87,7 @@ class BatchEmissionsProcessor:
             return None
         
         # Auto-detect column names (case-insensitive, flexible)
-        tracking_col = self._find_column(df, [tracking_column, 'Tracking Number', 'tracking_number', 'TrackingNumber'])
+        tracking_col = self._find_column(df, [tracking_column, 'Tracking Number', 'tracking_number', 'TrackingNumber', 'Tracking #'])
         carrier_col = self._find_column(df, [carrier_column, 'Item', 'carrier', 'Carrier', 'Service'])
         
         if not tracking_col:
@@ -108,26 +118,39 @@ class BatchEmissionsProcessor:
             status = "✅" if carrier.lower() in self.credentials else "⚠️ "
             print(f"   {status} {carrier}: {count} packages")
         
-        print(f"\nProcessing packages...")
+        print(f"\n🚀 Processing {len(df)} packages with {max_workers} concurrent workers...")
+        if delay_seconds > 0:
+            print(f"⏱️  Rate limiting: {delay_seconds}s delay between requests")
+        else:
+            print(f"⚡ No rate limiting - maximum speed")
         print(f"{'─'*80}\n")
         
-        # Process each row
-        for idx, row in df.iterrows():
-            tracking = str(row['_tracking_number']).strip()
-            carrier = str(row['_carrier']).strip()
+        # Process with concurrent threads
+        start_time = time.time()
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            futures = {}
+            for idx, row in df.iterrows():
+                future = executor.submit(
+                    self._process_single_package_wrapper,
+                    idx, row, production, verbose, delay_seconds, len(df)
+                )
+                futures[future] = idx
             
-            # Clean tracking number (remove trailing underscores)
-            tracking = tracking.rstrip('_')
-            
-            print(f"\n[{idx + 1}/{len(df)}] {carrier}: {tracking}")
-            print(f"{'─'*80}")
-            
-            result = self._process_single_package(row, production)
-            self.results.append(result)
-            
-            # Add delay to avoid rate limiting
-            if idx < len(df) - 1:
-                time.sleep(delay_seconds)
+            # Process completed tasks with progress bar
+            with tqdm(total=len(df), desc="Processing", unit="pkg") as pbar:
+                for future in as_completed(futures):
+                    result = future.result()
+                    with self.lock:
+                        self.results.append(result)
+                    pbar.update(1)
+        
+        elapsed_time = time.time() - start_time
+        print(f"\n⏱️  Processing completed in {elapsed_time:.2f}s ({len(df)/elapsed_time:.2f} packages/sec)")
+        
+        # Sort results by original index to maintain order
+        self.results.sort(key=lambda x: x.get('_index', 0))
         
         # Convert results to DataFrame
         results_df = self._create_results_dataframe(df)
@@ -145,9 +168,23 @@ class BatchEmissionsProcessor:
             print(f"\n❌ Error saving results: {e}")
         
         # Print summary
-        self._print_summary()
+        self._print_summary(elapsed_time)
         
         return results_df
+    
+    def _process_single_package_wrapper(self, idx: int, row: pd.Series, 
+                                       production: bool, verbose: bool,
+                                       delay_seconds: float, total: int) -> Dict:
+        """
+        Wrapper for processing a single package with optional rate limiting.
+        """
+        # Optional rate limiting
+        if delay_seconds > 0:
+            time.sleep(delay_seconds * idx / total)  # Stagger requests
+        
+        result = self._process_single_package(row, production, verbose, idx, total)
+        result['_index'] = idx  # Preserve original order
+        return result
     
     def _find_column(self, df: pd.DataFrame, possible_names: List[str]) -> Optional[str]:
         """
@@ -168,18 +205,23 @@ class BatchEmissionsProcessor:
         
         return None
     
-    def _process_single_package(self, row: pd.Series, production: bool) -> Dict:
+    def _process_single_package(self, row: pd.Series, production: bool,
+                               verbose: bool = False, idx: int = 0, 
+                               total: int = 0) -> Dict:
         """
         Process a single package and return result dictionary.
         
         Args:
             row: DataFrame row with package information
             production: Use production environment
+            verbose: Print detailed progress
+            idx: Index for progress tracking
+            total: Total packages for progress tracking
         
         Returns:
             Dict with results or error information
         """
-        tracking_number = str(row['_tracking_number']).strip().rstrip('_')  # Remove trailing underscore
+        tracking_number = str(row['_tracking_number']).strip().rstrip('_')
         carrier = str(row['_carrier']).strip().lower()
         
         # Map common carrier names
@@ -188,8 +230,8 @@ class BatchEmissionsProcessor:
             'ups': 'ups',
             'fedex': 'fedex',
             'dhl': 'dhl',
-            'amazon': 'amazon',  # Not supported yet
-            'lasership': 'lasership',  # Not supported yet
+            'amazon': 'amazon',
+            'lasership': 'lasership',
         }
         
         carrier = carrier_map.get(carrier, carrier)
@@ -199,14 +241,15 @@ class BatchEmissionsProcessor:
             if carrier in ['amazon', 'lasership']:
                 error_msg = f"Carrier '{carrier}' not supported (no public tracking API)"
             else:
-                error_msg = f"No credentials configured for carrier: {carrier}"
+                error_msg = f"Carrier '{carrier}' not configured"
             
-            print(f"   ⚠️  {error_msg}")
-            self.errors.append({
-                'tracking_number': tracking_number,
-                'carrier': carrier,
-                'error': error_msg
-            })
+            with self.lock:
+                self.errors.append({
+                    'tracking_number': tracking_number,
+                    'carrier': carrier,
+                    'error': error_msg
+                })
+            
             return {
                 'tracking_number': tracking_number,
                 'carrier': carrier,
@@ -235,16 +278,21 @@ class BatchEmissionsProcessor:
             )
             
             if result:
-                print(f"   ✅ Success: {result.total_emissions_kg:.4f} kg CO2e")
+                if verbose:
+                    print(f"   ✅ Success: {result.total_emissions_kg:.4f} kg CO2e")
                 return self._emission_result_to_dict(result)
             else:
-                error_msg = "Calculation failed (see logs above)"
-                print(f"   ❌ {error_msg}")
-                self.errors.append({
-                    'tracking_number': tracking_number,
-                    'carrier': carrier,
-                    'error': error_msg
-                })
+                error_msg = "Calculation failed"
+                if verbose:
+                    print(f"   ❌ {error_msg}")
+                
+                with self.lock:
+                    self.errors.append({
+                        'tracking_number': tracking_number,
+                        'carrier': carrier,
+                        'error': error_msg
+                    })
+                
                 return {
                     'tracking_number': tracking_number,
                     'carrier': carrier,
@@ -254,12 +302,16 @@ class BatchEmissionsProcessor:
         
         except Exception as e:
             error_msg = f"Exception: {str(e)}"
-            print(f"   ❌ {error_msg}")
-            self.errors.append({
-                'tracking_number': tracking_number,
-                'carrier': carrier,
-                'error': error_msg
-            })
+            if verbose:
+                print(f"   ❌ {error_msg}")
+            
+            with self.lock:
+                self.errors.append({
+                    'tracking_number': tracking_number,
+                    'carrier': carrier,
+                    'error': error_msg
+                })
+            
             return {
                 'tracking_number': tracking_number,
                 'carrier': carrier,
@@ -315,6 +367,10 @@ class BatchEmissionsProcessor:
         """Create a DataFrame from results"""
         results_df = pd.DataFrame(self.results)
         
+        # Remove internal tracking column
+        if '_index' in results_df.columns:
+            results_df = results_df.drop(columns=['_index'])
+        
         # Merge with original data to preserve any additional columns
         if 'tracking_number' in original_df.columns:
             results_df = original_df.merge(
@@ -326,7 +382,7 @@ class BatchEmissionsProcessor:
         
         return results_df
     
-    def _print_summary(self):
+    def _print_summary(self, elapsed_time: float = None):
         """Print summary statistics"""
         total = len(self.results)
         successful = sum(1 for r in self.results if r.get('status') == 'success')
@@ -339,6 +395,10 @@ class BatchEmissionsProcessor:
         print(f"Total Packages: {total}")
         print(f"✅ Successful: {successful} ({successful/total*100:.1f}%)")
         print(f"❌ Failed: {failed} ({failed/total*100:.1f}%)")
+        
+        if elapsed_time:
+            print(f"⏱️  Processing Time: {elapsed_time:.2f}s")
+            print(f"📈 Throughput: {total/elapsed_time:.2f} packages/sec")
         
         if successful > 0:
             total_emissions = sum(
@@ -393,13 +453,15 @@ if __name__ == "__main__":
     import os
     current_dir = os.getcwd()
     results_df = processor.process_csv(
-        input_file=current_dir + '/src/greenboard/emissions/reshaped_and_anonymized_report.csv',
-        output_file=current_dir + '/src/greenboard/emissions/reshaped_and_anonymized_report_with_emissions.csv',
-        delay_seconds=0.0,  # 0 second delay between API calls
-        production=True  # Use test environment
+        input_file=current_dir + '/src/greenboard/emissions/oct_tracking_numbers.csv',
+        output_file=current_dir + '/src/greenboard/emissions/oct_tracking_numbers_with_emissions.csv',
+        delay_seconds=0.0,  # No delay for maximum speed
+        production=True,
+        max_workers=10,  # Process 10 packages concurrently
+        verbose=False  # Set to True for detailed progress per package
     )
     
-    # Step 4: View results
+    # View results
     if results_df is not None:
         print("\nResults Preview:")
         print(results_df[['tracking_number', 'carrier', 'status', 'total_emissions_kg_co2e']].head())
