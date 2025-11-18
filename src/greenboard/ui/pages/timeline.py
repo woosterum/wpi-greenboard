@@ -43,8 +43,6 @@ if scope == "By Major":
 else:
     students_only = st.checkbox("Students only (filter)", value=False)
 
-fetch_btn = st.button("Load timeline")
-
 def build_query_params(start_date, end_date, interval, students_only=False):
     params = {"interval": interval}
     if start_date:
@@ -73,45 +71,18 @@ def render_timeline(df: pd.DataFrame, interval: str):
     # Plot emissions over time
     try:
         plot_df = df.set_index("period")["package_count"].astype(float)
-        st.area_chart(plot_df)
+        st.area_chart(plot_df, x_label="Period", y_label="Number of Packages", use_container_width=True)
     except Exception:
-        st.line_chart(df.set_index("period")["package_count"])
+        st.line_chart(df.set_index("period")["package_count"], x_label="Period", y_label="Number of Packages", use_container_width=True)
 
-# Only fetch when user asks
-if fetch_btn:
-    if scope == "By Major":
-        if not major_name:
-            st.error("Please select a major")
-        else:
-            params = build_query_params(start_date, end_date, interval)
-            params["major_name"] = major_name
-            try:
-                r = requests.get(f"{API_BASE_URL}/timeline/major", params=params, timeout=8)
-                r.raise_for_status()
-                resp = r.json()
-                timeline = resp.get("timeline", [])
-                df = pd.DataFrame(timeline)
-                # remove rows where period is missing/None so charts/tables don't show them
-                if "period" in df.columns:
-                    df = df[df["period"].notnull() & (df["period"].astype(str) != "None")]
-                if not df.empty:
-                    # ensure numeric types
-                    for col in ["total_emissions_kg", "avg_emissions_per_package_kg", "package_count"]:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-                render_timeline(df, interval)
-            except requests.exceptions.HTTPError as e:
-                if e.response is not None and e.response.status_code == 404:
-                    st.warning("No data found for that major or date range")
-                else:
-                    st.error("API error fetching major timeline")
-            except requests.exceptions.RequestException:
-                st.error("❌ Cannot connect to API")
-
+if scope == "By Major":
+    if not major_name:
+        st.error("Please select a major")
     else:
-        params = build_query_params(start_date, end_date, interval, students_only=students_only)
+        params = build_query_params(start_date, end_date, interval)
+        params["major_name"] = major_name
         try:
-            r = requests.get(f"{API_BASE_URL}/timeline/all", params=params, timeout=8)
+            r = requests.get(f"{API_BASE_URL}/timeline/major", params=params, timeout=8)
             r.raise_for_status()
             resp = r.json()
             timeline = resp.get("timeline", [])
@@ -120,14 +91,36 @@ if fetch_btn:
             if "period" in df.columns:
                 df = df[df["period"].notnull() & (df["period"].astype(str) != "None")]
             if not df.empty:
-                for col in ["total_emissions_kg", "avg_emissions_per_package_kg", "package_count", "total_distance_km"]:
+                # ensure numeric types
+                for col in ["total_emissions_kg", "avg_emissions_per_package_kg", "package_count"]:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
             render_timeline(df, interval)
         except requests.exceptions.HTTPError as e:
-            st.error("API returned an error when fetching timeline")
+            if e.response is not None and e.response.status_code == 404:
+                st.warning("No data found for that major or date range")
+            else:
+                st.error("API error fetching major timeline")
         except requests.exceptions.RequestException:
             st.error("❌ Cannot connect to API")
 
-st.markdown("\n---\n")
-st.caption("Timeline data is fetched from the backend endpoints under /timeline. Use interval and date filters to refine the view.")
+else:
+    params = build_query_params(start_date, end_date, interval, students_only=students_only)
+    try:
+        r = requests.get(f"{API_BASE_URL}/timeline/all", params=params, timeout=8)
+        r.raise_for_status()
+        resp = r.json()
+        timeline = resp.get("timeline", [])
+        df = pd.DataFrame(timeline)
+        # remove rows where period is missing/None so charts/tables don't show them
+        if "period" in df.columns:
+            df = df[df["period"].notnull() & (df["period"].astype(str) != "None")]
+        if not df.empty:
+            for col in ["total_emissions_kg", "avg_emissions_per_package_kg", "package_count", "total_distance_km"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        render_timeline(df, interval)
+    except requests.exceptions.HTTPError as e:
+        st.error("API returned an error when fetching timeline")
+    except requests.exceptions.RequestException:
+        st.error("❌ Cannot connect to API")

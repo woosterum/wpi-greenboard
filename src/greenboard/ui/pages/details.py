@@ -67,7 +67,7 @@ if not df.empty:
 
         if timeline_df.shape[0] > 1:
             # Plot the timeline of emissions over time
-            st.area_chart(timeline_df.set_index('period')['package_count'], height=200, width=700)
+            st.area_chart(timeline_df.set_index('period')['package_count'], height=300, width=700, x_label="Period", y_label="Number of Packages", use_container_width=True)
 
 
     # Convert dates to datetime for proper sorting
